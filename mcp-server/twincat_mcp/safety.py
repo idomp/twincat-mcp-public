@@ -42,6 +42,8 @@ DANGEROUS_TOOLS = [
     "twincat_deploy",
     "twincat_set_state",
     "twincat_write_var",
+    "twincat_write_var_list",
+    "twincat_scope_start_record",
 ]
 
 # Tools that additionally require `confirm: "CONFIRM"` on every call.

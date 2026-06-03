@@ -25,8 +25,8 @@ namespace TcAutomation.Commands
     ///   "stopOnError": true,                   // default true
     ///   "steps": [
     ///     { "id": "build",  "command": "build",     "args": { "clean": true } },
-    ///     { "id": "target", "command": "set-target","args": { "amsNetId": "5.22.157.86.1.1" } },
-    ///     { "id": "act",    "command": "activate",  "args": { "amsNetId": "5.22.157.86.1.1" } }
+    ///     { "id": "target", "command": "set-target","args": { "amsNetId": "192.168.1.10.1.1" } },
+    ///     { "id": "act",    "command": "activate",  "args": { "amsNetId": "192.168.1.10.1.1" } }
     ///   ]
     /// }
     /// </summary>

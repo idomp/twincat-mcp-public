@@ -247,7 +247,7 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "amsNetId": {
                         "type": "string",
-                        "description": f"Target AMS Net ID (e.g., '5.22.157.86.1.1'). {_AMS_NET_ID_DESC}"
+                        "description": f"Target AMS Net ID (e.g., '192.168.1.10.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "tcVersion": {
                         "type": "string",
@@ -336,7 +336,7 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "amsNetId": {
                         "type": "string",
-                        "description": f"Target AMS Net ID (e.g., '5.22.157.86.1.1'). {_AMS_NET_ID_DESC}"
+                        "description": f"Target AMS Net ID (e.g., '192.168.1.10.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "plcName": {
                         "type": "string",
@@ -656,7 +656,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1' or '127.0.0.1.1.1' for local). {_AMS_NET_ID_DESC}"
+                        "description": f"AMS Net ID of the target PLC (e.g., '192.168.1.10.1.1' or '127.0.0.1.1.1' for local). {_AMS_NET_ID_DESC}"
                     },
                     "port": {
                         "type": "integer",
@@ -680,7 +680,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1'). {_AMS_NET_ID_DESC}"
+                        "description": f"AMS Net ID of the target PLC (e.g., '192.168.1.10.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "state": {
                         "type": "string",
@@ -708,7 +708,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1'). {_AMS_NET_ID_DESC}"
+                        "description": f"AMS Net ID of the target PLC (e.g., '192.168.1.10.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "symbol": {
                         "type": "string",
@@ -736,7 +736,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1'). {_AMS_NET_ID_DESC}"
+                        "description": f"AMS Net ID of the target PLC (e.g., '192.168.1.10.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "symbol": {
                         "type": "string",
@@ -912,7 +912,7 @@ def get_tool_schemas() -> list[Tool]:
         ),
         Tool(
             name="twincat_generate_library",
-            description="Generate a TwinCAT .library artifact from a specific PLC project in a solution. Defaults output to the solution directory when no location is provided.",
+            description="Generate a TwinCAT .library artifact from a specific PLC project in a solution. Defaults output to the solution directory when no location is provided. Set 'install' to true to also install the saved library into a TwinCAT library repository (matches the IDE's 'Save and Install' menu item).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -941,9 +941,122 @@ def get_tool_schemas() -> list[Tool]:
                         "type": "boolean",
                         "description": "Validate flow without exporting (default: false)",
                         "default": False
+                    },
+                    "install": {
+                        "type": "boolean",
+                        "description": "After saving, install the library into a TwinCAT library repository on the engineering machine (default: false). Equivalent to the IDE's right-click 'Save and Install'.",
+                        "default": False
+                    },
+                    "repository": {
+                        "type": "string",
+                        "description": "Library repository name to install into when 'install' is true (default: 'System')",
+                        "default": "System"
                     }
                 },
                 "required": ["solutionPath", "plcName"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_enable_tmc_auto_reload",
+            description=(
+                "One-shot setup for multi-PLC integration projects that reference "
+                "external standalone PLCs via TMC files. Adds "
+                "ReloadTmc=\"true\" to each external <Project> node in the "
+                "integration .tsproj so subsequent builds re-read the TMC instead "
+                "of stalling on a TmcHash mismatch. "
+                "Idempotent: PLCs that already have ReloadTmc=\"true\" are "
+                "skipped. Creates a timestamped .bak.<UTC> backup before "
+                "writing. Use this once after wiring up the multi-PLC integration; "
+                "afterwards `twincat_multi_plc_build` (or any "
+                "`twincat_build` of the integration solution) will pick up sub-PLC "
+                "TMC changes automatically."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the integration TwinCAT .sln file"
+                    },
+                    "plcNames": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of PLC project names to target. If omitted, every external PLC under <Plc> is processed."
+                    },
+                    "includeEmbedded": {
+                        "type": "boolean",
+                        "description": "Also re-affirm ReloadTmc on embedded PLC projects that don't have it set (default: false)",
+                        "default": False
+                    },
+                    "dryRun": {
+                        "type": "boolean",
+                        "description": "Report which PLCs would be modified, but don't touch the file (default: false)",
+                        "default": False
+                    }
+                },
+                "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_multi_plc_build",
+            description=(
+                "Build a chain of standalone PLC solutions and then the "
+                "integration solution that references them. Used when a TwinCAT "
+                "system splits one integration project + N stand-alone PLC "
+                "sub-projects: each sub-PLC has its own .sln that produces "
+                "a .tmc, and the integration .tsproj references those .tmc files "
+                "via TmcPath. Sub-builds run in the given order; the integration "
+                "build runs last (skipped if a sub fails, unless "
+                "continueOnError is true). For TMC pickup to work, the "
+                "integration .tsproj must have ReloadTmc=\"true\" on each "
+                "external <Project> — run `twincat_enable_tmc_auto_reload` "
+                "once to set that up."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subSolutions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Ordered list of standalone PLC .sln paths to build before the integration build",
+                        "minItems": 1
+                    },
+                    "infraSolution": {
+                        "type": "string",
+                        "description": "Path to the integration .sln to build last"
+                    },
+                    "clean": {
+                        "type": "boolean",
+                        "description": "Clean each solution before building (default: true)",
+                        "default": True
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force a specific TwinCAT version for every build. Optional."
+                    },
+                    "continueOnError": {
+                        "type": "boolean",
+                        "description": "If true, keep building remaining sub-PLCs and the integration solution even after a failure (default: false — stop and skip integration on first failure)",
+                        "default": False
+                    },
+                    "timeoutMinutes": {
+                        "type": "integer",
+                        "description": "Per-build timeout in minutes (default: 15)",
+                        "default": 15,
+                        "minimum": 1
+                    }
+                },
+                "required": ["subSolutions", "infraSolution"]
             },
             annotations={
                 "readOnlyHint": False,
@@ -1175,7 +1288,7 @@ def get_tool_schemas() -> list[Tool]:
                     "amsNetId": {
                         "type": "string",
                         "description": (
-                            "New persistent default AMS Net ID (e.g., '5.22.157.86.1.1'). "
+                            "New persistent default AMS Net ID (e.g., '192.168.1.10.1.1'). "
                             "Must be six dot-separated octets in 0-255. "
                             "Omit together with `reset` to get a read-only status."
                         )
@@ -1204,5 +1317,301 @@ def get_tool_schemas() -> list[Tool]:
                 "destructiveHint": False,
                 "idempotentHint": True
             }
-        )
+        ),
+
+        # ── ADS batch variable tools ─────────────────────────────────────────
+        Tool(
+            name="twincat_read_var_list",
+            description=(
+                "Read multiple PLC variables in a single batch call via ADS. "
+                "Much more efficient than calling twincat_read_var multiple times. "
+                "Returns a dictionary of symbol paths to their values, types, and sizes. "
+                "Symbols that fail to read will have individual error messages without "
+                "affecting other symbols in the batch."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
+                    },
+                    "symbols": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of symbol paths to read (e.g., ['GVL.nCounter', 'MAIN.bRunning']). Max 500.",
+                        "minItems": 1,
+                        "maxItems": 500
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851)",
+                        "default": 851
+                    }
+                },
+                "required": ["amsNetId", "symbols"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_write_var_list",
+            description=(
+                "Write multiple PLC variables in a single batch call via ADS. "
+                "Much more efficient than calling twincat_write_var multiple times. "
+                "Accepts a dictionary of symbol paths to string values coerced to each symbol's PLC type. "
+                "Returns previous and new values for each symbol. "
+                "DANGEROUS: Requires armed mode. Writes are sequential — if one fails, "
+                "previous writes in the batch are NOT rolled back."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
+                    },
+                    "variables": {
+                        "type": "object",
+                        "description": "Dictionary of symbol paths to values (e.g., {'GVL.x': '42', 'GVL.y': '3.14'}). Max 500 entries.",
+                        "additionalProperties": {"type": "string"}
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851)",
+                        "default": 851
+                    }
+                },
+                "required": ["amsNetId", "variables"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True
+            }
+        ),
+
+        # ── ADS direct recording ─────────────────────────────────────────────
+        Tool(
+            name="twincat_ads_record",
+            description=(
+                "Record PLC variables at high frequency via ADS notifications and export to CSV. "
+                "This is the PREFERRED recording method — no TwinCAT Scope Server or TE13xx license needed. "
+                "Connects to the PLC, registers cyclic ADS notifications at the specified sample rate, "
+                "records for the given duration, then outputs a timestamped CSV file. "
+                "Supports sample rates down to 1 ms. Works with any ADS-accessible variable "
+                "(PLC port 851, NC port 501, etc.)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": f"AMS Net ID of the target PLC. {_AMS_NET_ID_DESC}"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851 for PLC, 501 for NC)",
+                        "default": 851
+                    },
+                    "variables": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of PLC variable paths to record (e.g., ['GVL.fSpeed', 'GVL.fPosition'])"
+                    },
+                    "sampleTimeMs": {
+                        "type": "integer",
+                        "description": "Sample interval in milliseconds (min: 1, default: 10)",
+                        "default": 10
+                    },
+                    "durationSec": {
+                        "type": "number",
+                        "description": "Recording duration in seconds (0 = use maxTimeSec only). Optional when using triggers.",
+                        "default": 0
+                    },
+                    "outputPath": {
+                        "type": "string",
+                        "description": "Optional path for the CSV output file. Default: auto-generated in temp folder."
+                    },
+                    "startTrigger": {
+                        "type": "string",
+                        "description": "Start recording when this condition is met. Format: 'VariablePath operator value' (e.g. 'MAIN.bRunning == 1'). Operators: > < >= <= == !="
+                    },
+                    "stopTrigger": {
+                        "type": "string",
+                        "description": "Stop recording when this condition is met. Format: 'VariablePath operator value'. Operators: > < >= <= == !="
+                    },
+                    "maxTimeSec": {
+                        "type": "number",
+                        "description": "Max seconds to wait for startTrigger, and safety fallback for open-ended recordings. Does NOT cap a timed durationSec recording. Default: 60",
+                        "default": 60
+                    }
+                },
+                "required": ["amsNetId", "variables"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+
+        # ── TwinCAT Scope tools (require TE13xx license) ─────────────────────
+        Tool(
+            name="twincat_scope_create_config",
+            description=(
+                "Create a TwinCAT Scope configuration (.tcscopex) for recording PLC variables. "
+                "Specify the target PLC, variables to record, and sample rate. "
+                "Returns a config file path. For actual recording, prefer twincat_ads_record (no license needed). "
+                "Requires TE13xx Scope View installed on this machine."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": f"AMS Net ID of the target PLC. {_AMS_NET_ID_DESC}"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851 for PLC runtime 1)",
+                        "default": 851
+                    },
+                    "variables": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of PLC variable paths to record (e.g., ['GVL.fMotorSpeed', 'GVL.fTemperature'])"
+                    },
+                    "sampleTimeMs": {
+                        "type": "integer",
+                        "description": "Sample interval in milliseconds (default: 10)",
+                        "default": 10
+                    },
+                    "recordTimeSec": {
+                        "type": "number",
+                        "description": "Optional max recording duration in seconds. Omit for manual stop."
+                    },
+                    "outputPath": {
+                        "type": "string",
+                        "description": "Optional path to save the .tcscopex file. Default: auto-generated in temp folder."
+                    },
+                    "chartName": {
+                        "type": "string",
+                        "description": "Optional display name for the chart (default: 'MCP Trace')"
+                    }
+                },
+                "required": ["amsNetId", "variables"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_scope_start_record",
+            description=(
+                "Start a TwinCAT Scope Server recording using a .tcscopex configuration. "
+                "REQUIRES TE13xx Scope Server license — will fail without it. "
+                "Prefer twincat_ads_record instead (no license needed). "
+                "This is a DANGEROUS operation — requires armed mode."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "configPath": {
+                        "type": "string",
+                        "description": "Path to the .tcscopex configuration file (from twincat_scope_create_config)"
+                    }
+                },
+                "required": ["configPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False
+            }
+        ),
+        Tool(
+            name="twincat_scope_stop_record",
+            description=(
+                "Stop an active TwinCAT Scope Server recording and export the data. "
+                "Requires TE13xx Scope Server license. "
+                "Returns the path to a CSV file."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "outputPath": {
+                        "type": "string",
+                        "description": "Optional path for the CSV output file. Default: auto-generated."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["csv", "json"],
+                        "description": "Output format (default: csv)",
+                        "default": "csv"
+                    }
+                },
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False
+            }
+        ),
+        Tool(
+            name="twincat_scope_get_status",
+            description=(
+                "Get the current TwinCAT Scope Server recording status. "
+                "Requires TE13xx Scope Server license. "
+                "Returns whether a recording is active, elapsed time, and sample count."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_scope_export",
+            description=(
+                "Export a TwinCAT Scope data file (.svdx) to CSV or other readable format. "
+                "Uses TC3ScopeExportTool.exe. Useful for converting traces recorded outside the MCP."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "inputPath": {
+                        "type": "string",
+                        "description": "Path to the .svdx or .tcscopex file to export"
+                    },
+                    "outputPath": {
+                        "type": "string",
+                        "description": "Optional output path for the CSV. Default: same name with .csv extension."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["csv", "tdms"],
+                        "description": "Export format (default: csv)",
+                        "default": "csv"
+                    }
+                },
+                "required": ["inputPath"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
     ]

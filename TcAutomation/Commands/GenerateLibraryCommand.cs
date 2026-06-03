@@ -27,6 +27,9 @@ namespace TcAutomation.Commands
             public string OutputLibraryPath { get; set; }
             public bool BuildSkipped { get; set; }
             public bool DryRun { get; set; }
+            public bool Installed { get; set; }
+            public string Repository { get; set; }
+            public string InstallErrorMessage { get; set; }
         }
 
         public static GenerateLibraryResult Execute(
@@ -35,7 +38,9 @@ namespace TcAutomation.Commands
             string libraryLocation = null,
             string tcVersion = null,
             bool skipBuild = false,
-            bool dryRun = false)
+            bool dryRun = false,
+            bool install = false,
+            string repository = "System")
         {
             var result = new GenerateLibraryResult
             {
@@ -92,7 +97,7 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var sessionResult = ExecuteInSession(vsInstance, solutionPath, plcName, libraryLocation, skipBuild, dryRun);
+                var sessionResult = ExecuteInSession(vsInstance, solutionPath, plcName, libraryLocation, skipBuild, dryRun, install, repository);
                 return sessionResult;
             }
             catch (Exception ex)
@@ -117,14 +122,19 @@ namespace TcAutomation.Commands
             string plcName,
             string libraryLocation = null,
             bool skipBuild = false,
-            bool dryRun = false)
+            bool dryRun = false,
+            bool install = false,
+            string repository = "System")
         {
+            string repositoryName = string.IsNullOrWhiteSpace(repository) ? "System" : repository;
+
             var result = new GenerateLibraryResult
             {
                 SolutionPath = solutionPath,
                 PlcName = plcName,
                 BuildSkipped = skipBuild,
-                DryRun = dryRun
+                DryRun = dryRun,
+                Repository = install ? repositoryName : null
             };
 
             try
@@ -173,7 +183,9 @@ namespace TcAutomation.Commands
                 if (dryRun)
                 {
                     result.Success = true;
-                    result.Message = $"Dry run successful. Library would be generated at: {outputLibraryPath}";
+                    result.Message = install
+                        ? $"Dry run successful. Library would be generated at: {outputLibraryPath} and installed into repository '{repositoryName}'"
+                        : $"Dry run successful. Library would be generated at: {outputLibraryPath}";
                     return result;
                 }
 
@@ -198,6 +210,29 @@ namespace TcAutomation.Commands
 
                 result.Success = true;
                 result.Message = $"Library generated successfully: {outputLibraryPath}";
+
+                if (install)
+                {
+                    bool installed = TryInstallLibrary(
+                        automation,
+                        plcProject.Name,
+                        outputLibraryPath,
+                        repositoryName,
+                        out string installError);
+
+                    if (installed)
+                    {
+                        result.Installed = true;
+                        result.Message = $"Library generated and installed into repository '{repositoryName}': {outputLibraryPath}";
+                    }
+                    else
+                    {
+                        result.Installed = false;
+                        result.InstallErrorMessage = installError;
+                        result.Message = $"Library generated, but install into repository '{repositoryName}' failed: {outputLibraryPath}";
+                    }
+                }
+
                 return result;
             }
             catch (Exception ex)
@@ -664,6 +699,90 @@ namespace TcAutomation.Commands
         {
             Exception baseEx = ex.InnerException ?? ex;
             return baseEx.Message;
+        }
+
+        private static bool TryInstallLibrary(
+            AutomationInterface automation,
+            string plcName,
+            string libraryFilePath,
+            string repositoryName,
+            out string errorMessage)
+        {
+            errorMessage = null;
+
+            ITcSmTreeItem referencesItem = null;
+            string referencesPath = $"TIPC^{plcName}^{plcName} Project^References";
+
+            try
+            {
+                WriteProgress($"Looking up references item at '{referencesPath}'");
+                referencesItem = automation.SystemManager.LookupTreeItem(referencesPath);
+            }
+            catch (Exception ex)
+            {
+                WriteProgress($"Direct LookupTreeItem failed: {ShortException(ex)}; falling back to child enumeration");
+                referencesItem = FindReferencesByEnumeration(automation, plcName);
+            }
+
+            if (referencesItem == null)
+            {
+                errorMessage = $"Could not locate the References node for PLC project '{plcName}'.";
+                return false;
+            }
+
+            ITcPlcLibraryManager libraryManager;
+            try
+            {
+                libraryManager = (ITcPlcLibraryManager)referencesItem;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"References node for '{plcName}' is not an ITcPlcLibraryManager: {ShortException(ex)}";
+                return false;
+            }
+
+            try
+            {
+                WriteProgress($"Calling InstallLibrary(repo='{repositoryName}', path='{libraryFilePath}', overwrite=true)");
+                libraryManager.InstallLibrary(repositoryName, libraryFilePath, true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"InstallLibrary failed for repository '{repositoryName}': {ShortException(ex)}";
+                return false;
+            }
+        }
+
+        private static ITcSmTreeItem FindReferencesByEnumeration(AutomationInterface automation, string plcName)
+        {
+            try
+            {
+                ITcSmTreeItem outerPlc = FindPlcProjectByName(automation.PlcTreeItem, plcName);
+                if (outerPlc == null)
+                {
+                    return null;
+                }
+
+                for (int i = 1; i <= outerPlc.ChildCount; i++)
+                {
+                    ITcSmTreeItem innerProject = outerPlc.Child[i];
+                    for (int j = 1; j <= innerProject.ChildCount; j++)
+                    {
+                        ITcSmTreeItem candidate = innerProject.Child[j];
+                        if (candidate.Name.Equals("References", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return candidate;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteProgress($"References enumeration fallback failed: {ShortException(ex)}");
+            }
+
+            return null;
         }
 
         private static int CountBuildErrors(ErrorItems errorItems)

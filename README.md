@@ -2,6 +2,8 @@
 
 Build, deploy, and poke at TwinCAT PLCs from any MCP-aware AI client.
 
+> A community fork of [eponce92/twincat-mcp](https://github.com/eponce92/twincat-mcp) (MIT). Adds ADS batch ops, ADS/Scope recording, `.tspproj` support, a `generate_library` install option, multi-PLC build orchestration, and a pytest suite.
+
 ---
 
 ## What it does
@@ -88,7 +90,7 @@ Point it at your test rig by setting `TWINCAT_DEFAULT_AMS_NET_ID` in the MCP cli
       "command": "python",
       "args": ["C:/path/to/twincat-mcp/mcp-server/server.py"],
       "env": {
-        "TWINCAT_DEFAULT_AMS_NET_ID": "5.22.157.86.1.1"
+        "TWINCAT_DEFAULT_AMS_NET_ID": "192.168.1.10.1.1"
       }
     }
   }
@@ -112,7 +114,7 @@ Arm dangerous operations to deploy the hotfix.
 Armed mode auto-expires after 5 minutes (override with `TWINCAT_ARMED_TTL` seconds). You can also disarm manually by calling `twincat_arm_dangerous_operations` with `disarm: true`.
 
 Tools that require armed mode:
-`twincat_activate`, `twincat_restart`, `twincat_deploy`, `twincat_set_state`, `twincat_write_var`, and `twincat_run_tcunit` against a remote target.
+`twincat_activate`, `twincat_restart`, `twincat_deploy`, `twincat_set_state`, `twincat_write_var`, `twincat_write_var_list`, `twincat_scope_start_record`, and `twincat_run_tcunit` against a remote target.
 
 The three most destructive tools (`twincat_activate`, `twincat_restart`, `twincat_deploy`) also require `confirm: "CONFIRM"` as an explicit second step.
 
@@ -161,11 +163,11 @@ Example: full "set target, build, activate, restart" flow in one shell open:
   "solutionPath": "C:/Projects/MyMachine/Solution.sln",
   "confirm": "CONFIRM",
   "steps": [
-    { "id": "target", "command": "set-target",       "args": { "amsNetId": "5.22.157.86.1.1" } },
+    { "id": "target", "command": "set-target",       "args": { "amsNetId": "192.168.1.10.1.1" } },
     { "id": "boot",   "command": "set-boot-project", "args": { "autostart": true, "generate": true } },
     { "id": "build",  "command": "build",            "args": { "clean": true } },
-    { "id": "act",    "command": "activate",         "args": { "amsNetId": "5.22.157.86.1.1" } },
-    { "id": "rst",    "command": "restart",          "args": { "amsNetId": "5.22.157.86.1.1" } }
+    { "id": "act",    "command": "activate",         "args": { "amsNetId": "192.168.1.10.1.1" } },
+    { "id": "rst",    "command": "restart",          "args": { "amsNetId": "192.168.1.10.1.1" } }
   ]
 }
 ```
@@ -182,7 +184,9 @@ Example: full "set target, build, activate, restart" flow in one shell open:
 | `twincat_static_analysis`          | Static analysis via TE1200 (license required).                                                                                        |
 | `twincat_clean`                    | Remove build artifacts.                                                                                                               |
 | `twincat_get_info`                 | TwinCAT version, VS version, PLCs in the solution.                                                                                    |
-| `twincat_generate_library`         | Export a PLC project as a `.library` file. Existing output is renamed to `*.backup_yyyyMMdd_HHmmss.library`.                          |
+| `twincat_generate_library`         | Export a PLC project as a `.library` file. Existing output is renamed to `*.backup_yyyyMMdd_HHmmss.library`. Pass `install: true` (optional `repository`, default `"System"`) to also install the saved library into a TwinCAT library repository — the IDE's right-click "Save and Install" equivalent. |
+| `twincat_enable_tmc_auto_reload`   | One-shot setup for multi-PLC integration projects: adds `ReloadTmc="true"` to each external `<Project>` in the integration `.tsproj` so subsequent builds auto-re-read each sub-PLC's `.tmc`. Surgical byte-level edit (only the target attribute lines change). Timestamped `.bak.<UTC>` backup. Idempotent. |
+| `twincat_multi_plc_build`          | Orchestrator: build N standalone PLC solutions then the integration solution that references them via TMC. Stops on first failure unless `continueOnError: true`. Pair with `twincat_enable_tmc_auto_reload` for the recommended multi-PLC workflow. |
 | `twincat_set_target`               | Set the target AMS Net ID.                                                                                                            |
 | `twincat_activate`                 | Activate configuration on the target. Armed + confirm.                                                                                |
 | `twincat_restart`                  | Restart TwinCAT runtime. Armed + confirm.                                                                                             |
@@ -204,6 +208,14 @@ Example: full "set target, build, activate, restart" flow in one shell open:
 | `twincat_kill_stale`               | Surgical cleanup: kill our own shell host + DTE and reap session-file orphans. Only touches PIDs recorded in our session files.       |
 | `twincat_host_status`              | Show persistent shell host state (PID, DTE PID, loaded solution, uptime). Read-only.                                                  |
 | `twincat_set_default_target`       | Change (or clear) the persistent default AMS Net ID. Survives conversations and server restarts. See "Default target PLC" above.      |
+| `twincat_read_var_list`            | Read multiple PLC variables in one batch ADS call. Much faster than looping `twincat_read_var`.                                       |
+| `twincat_write_var_list`           | Write multiple PLC variables in one batch ADS call. Armed.                                                                            |
+| `twincat_ads_record`               | Record PLC variables via ADS notifications to CSV. **No TE13xx license needed.** Preferred for data capture.                         |
+| `twincat_scope_create_config`      | Create a `.tcscopex` Scope config file (requires TE13xx installed).                                                                   |
+| `twincat_scope_start_record`       | Start a Scope Server recording. Requires TE13xx + armed mode.                                                                         |
+| `twincat_scope_stop_record`        | Stop recording and export CSV. Requires TE13xx.                                                                                       |
+| `twincat_scope_get_status`         | Get Scope Server recording status. Requires TE13xx.                                                                                   |
+| `twincat_scope_export`             | Export `.svdx` scope data to CSV via TC3ScopeExportTool.                                                                              |
 
 
 ### `twincat_run_tcunit` parameters
@@ -224,9 +236,12 @@ Local targets (`127.0.0.1.1.1`) do not require armed mode. Remote targets do.
 Build my TwinCAT project at C:\Projects\MyMachine\Solution.sln
 Check all objects in TcForgeExample
 Read MAIN.bRunning from the PLC
-What is the TwinCAT state on 172.18.236.100.1.1?
+What is the TwinCAT state on 192.168.1.10.1.1?
 Disable I/O and activate to the test PLC
 Generate a library for PLC 'MainPlc' into C:\Artifacts\Libraries
+Save and install PLC 'MyLib' as a library into the System repository
+Build the PlcA and PlcB sub-PLCs, then build the Integration solution
+Enable TMC auto-reload on the Integration solution (dry-run first)
 Run TcUnit tests on my project
 ```
 

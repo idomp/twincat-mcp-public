@@ -583,11 +583,15 @@ async def handle_generate_library(arguments: dict, tool_start_time: float) -> li
     tc_version = arguments.get("tcVersion")
     skip_build = arguments.get("skipBuild", False)
     dry_run = arguments.get("dryRun", False)
+    install = arguments.get("install", False)
+    repository = arguments.get("repository") or "System"
 
     step_args: dict = {
         "plcName": plc_name,
         "skipBuild": bool(skip_build),
         "dryRun": bool(dry_run),
+        "install": bool(install),
+        "repository": repository,
     }
     if library_location:
         step_args["libraryLocation"] = library_location
@@ -602,7 +606,17 @@ async def handle_generate_library(arguments: dict, tool_start_time: float) -> li
         output = f"{status_prefix}{result.get('message', 'Library generated successfully')}\n\n"
         output += f"PLC: {result.get('plcName', plc_name)}\n"
         output += f"Output: {result.get('outputLibraryPath', 'Unknown')}\n"
-        output += f"Build Skipped: {'Yes' if result.get('buildSkipped') else 'No'}"
+        output += f"Build Skipped: {'Yes' if result.get('buildSkipped') else 'No'}\n"
+        if install:
+            installed = result.get("installed")
+            repo = result.get("repository") or repository
+            if installed:
+                output += f"Installed: ✅ into repository '{repo}'"
+            else:
+                install_err = result.get("installErrorMessage")
+                output += f"Installed: ❌ into repository '{repo}'"
+                if install_err:
+                    output += f"\nInstall error: {install_err}"
     else:
         output = "❌ Library generation failed\n\n"
         if result.get("errorMessage"):

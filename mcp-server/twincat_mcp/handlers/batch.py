@@ -237,6 +237,12 @@ async def handle_batch(arguments: dict, tool_start_time: float) -> list[TextCont
                     out_path = _ci_get(inner, "outputLibraryPath")
                     if out_path:
                         output += f"      output: {out_path}\n"
+                    if _ci_get(inner, "installed"):
+                        repo = _ci_get(inner, "repository") or "System"
+                        output += f"      installed: ✅ into '{repo}'\n"
+                    elif _ci_get(inner, "installErrorMessage"):
+                        repo = _ci_get(inner, "repository") or "System"
+                        output += f"      installed: ❌ into '{repo}' ({_ci_get(inner, 'installErrorMessage')})\n"
 
     # Top-level error from C# (e.g. couldn't open shell).
     if not overall_success and result.get("errorMessage"):

@@ -260,7 +260,7 @@ def set_persistent_default(ams_net_id: str, reason: Optional[str] = None) -> dic
     if not _is_valid_ams_net_id(cleaned):
         raise ValueError(
             f"'{ams_net_id}' is not a valid AMS Net ID. "
-            f"Expected six dot-separated octets in 0-255, e.g. '5.22.157.86.1.1'."
+            f"Expected six dot-separated octets in 0-255, e.g. '192.168.1.10.1.1'."
         )
 
     previous_value = DEFAULT_AMS_NET_ID
