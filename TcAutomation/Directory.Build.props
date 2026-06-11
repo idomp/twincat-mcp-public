@@ -1,0 +1,31 @@
+<Project>
+  <!--
+    Opt-in build path for machines that have TwinCAT XAE / TcXaeShell but NOT a full
+    Visual Studio / VS Build Tools install. Enable with /p:NoVisualStudioBuild=true
+    (see ../scripts/build-no-vs.ps1). When the flag is unset this file is a no-op, so
+    normal `setup.bat` / Visual Studio builds are completely unaffected.
+
+    It fills the three gaps a TcXaeShell-only box has:
+      1. Roslyn C# compiler   -> NuGet Microsoft.Net.Compilers (TcXaeShell's MSBuild 15.9
+                                 ships no Roslyn). 3.4.0 supports C# 8; DiscoverEditorConfigFiles=false
+                                 avoids an MSBuild-16-only intrinsic its targets call.
+      2. .NET 4.7.2 ref asms  -> NuGet Microsoft.NETFramework.ReferenceAssemblies.net472
+                                 (no targeting pack required on the machine).
+      3. EnvDTE / EnvDTE80    -> official NuGet PIAs (no TlbImp/AxImp / Windows SDK needed).
+    TCatSysManagerLib is supplied as a pre-generated interop (see Directory.Build.targets
+    and gen-interop.ps1).
+  -->
+  <PropertyGroup Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <DiscoverEditorConfigFiles>false</DiscoverEditorConfigFiles>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Net.Compilers" Version="3.4.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="envdte" Version="17.13.40008" />
+    <PackageReference Include="envdte80" Version="17.13.40008" />
+  </ItemGroup>
+</Project>

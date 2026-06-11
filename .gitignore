@@ -2,6 +2,8 @@
 TcAutomation/bin/
 TcAutomation/obj/
 TcAutomation/publish/
+# Generated COM interop (produced by gen-interop.ps1 during the no-VS build)
+TcAutomation/interop/
 
 # Python
 mcp-server/__pycache__/

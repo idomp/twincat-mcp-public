@@ -67,6 +67,25 @@ code --add-mcp '{"name":"twincat-automation","type":"stdio","command":"python","
 
 Restart the client and enable the server.
 
+## Build without Visual Studio (TcXaeShell only)
+
+The prerequisites above assume Visual Studio (or VS Build Tools) for the C# build. If you have **TwinCAT XAE / TcXaeShell** installed but no Visual Studio, you can still build `TcAutomation.exe` — TcXaeShell ships its own MSBuild, and the remaining pieces come from NuGet:
+
+```powershell
+# from the repo root
+.\scripts\build-no-vs.ps1
+```
+
+This opt-in path:
+
+- uses the MSBuild bundled with TcXaeShell (`...\Beckhoff\TcXaeShell\MSBuild\15.0\Bin\MSBuild.exe`),
+- pulls the Roslyn C# compiler, the .NET Framework 4.7.2 reference assemblies, and the EnvDTE/EnvDTE80 PIAs from NuGet (so no .NET targeting pack is needed),
+- generates the `TCatSysManagerLib` COM interop from TwinCAT's own type library via `TcAutomation\gen-interop.ps1` — using `TypeLibConverter`, so **no Windows SDK / `TlbImp.exe` is required**.
+
+It is all gated behind `/p:NoVisualStudioBuild=true` (`TcAutomation/Directory.Build.props` + `.targets`), so it is a complete no-op for normal `setup.bat` / Visual Studio builds. Output: `TcAutomation\bin\Release\TcAutomation.exe`.
+
+> The interop step must run under **Windows PowerShell 5.1** (`TypeLibConverter` is .NET Framework-only; PowerShell 7+ is .NET Core). `build-no-vs.ps1` invokes it for you. After building, install the Python deps and register the server exactly as above.
+
 ## Default target PLC
 
 Every tool that takes an `amsNetId` (TcUnit, deploy, activate, restart, get/set state, read/write var, set-target) falls back to a configurable default when the agent doesn't pass one. Out of the box that default is `127.0.0.1.1.1` (local runtime), which preserves the old behaviour.
