@@ -1,0 +1,24 @@
+<Project>
+  <!--
+    Part of the opt-in /p:NoVisualStudioBuild=true path (see Directory.Build.props).
+    Imported AFTER the csproj body, so the <COMReference> items already exist.
+
+    A TcXaeShell-only machine has no Windows SDK, so MSBuild's ResolveComReference task
+    (which needs TlbImp.exe / AxImp.exe) cannot run. We remove the COM references and bind
+    to managed interops instead:
+      - EnvDTE / EnvDTE80  -> official NuGet PIAs (added in Directory.Build.props)
+      - TCatSysManagerLib  -> interop\Interop.TCatSysManagerLib.dll, pre-generated from
+                              C:\TwinCAT\3.1\Components\Base\TypeLib\<ver>\TCatSysManager.tlb
+                              via TypeLibConverter (see gen-interop.ps1).
+    Net effect: identical references, but ResolveComReference is never invoked.
+    No-op unless NoVisualStudioBuild=true, so Visual Studio builds are unaffected.
+  -->
+  <ItemGroup Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <COMReference Remove="@(COMReference)" />
+    <Reference Include="Interop.TCatSysManagerLib">
+      <HintPath>$(MSBuildThisFileDirectory)interop\Interop.TCatSysManagerLib.dll</HintPath>
+      <Private>true</Private>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
+  </ItemGroup>
+</Project>
