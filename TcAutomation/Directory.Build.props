@@ -9,6 +9,9 @@
       1. Roslyn C# compiler   -> NuGet Microsoft.Net.Compilers (TcXaeShell's MSBuild 15.9
                                  ships no Roslyn). 3.4.0 supports C# 8; DiscoverEditorConfigFiles=false
                                  avoids an MSBuild-16-only intrinsic its targets call.
+                                 NOTE: do NOT switch to Microsoft.Net.Compilers.Toolset; it requires
+                                 MSBuild 16+, which TcXaeShell does not have. C# 9+ language features
+                                 will not compile on this path (C# 8 ceiling); the VS build is unaffected.
       2. .NET 4.7.2 ref asms  -> NuGet Microsoft.NETFramework.ReferenceAssemblies.net472
                                  (no targeting pack required on the machine).
       3. EnvDTE / EnvDTE80    -> official NuGet PIAs (no TlbImp/AxImp / Windows SDK needed).
@@ -25,6 +28,8 @@
     <PackageReference Include="Microsoft.Net.Compilers" Version="3.4.0">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!-- No PrivateAssets here (unlike the build-only packages above): these PIAs must
+         flow to the output directory so the COM interop resolves at runtime. -->
     <PackageReference Include="envdte" Version="17.13.40008" />
     <PackageReference Include="envdte80" Version="17.13.40008" />
   </ItemGroup>
