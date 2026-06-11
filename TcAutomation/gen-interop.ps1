@@ -30,9 +30,15 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
 
 if (-not $TlbPath) {
     $base = 'C:\TwinCAT\3.1\Components\Base\TypeLib'
+    # Pick the highest version folder, ignoring any non-version dir name (e.g. a backup
+    # folder). A bare [version] cast inside Sort-Object would terminate under
+    # $ErrorActionPreference='Stop'; TryParse filters safely instead.
     $TlbPath = Get-ChildItem $base -Recurse -Filter 'TCatSysManager.tlb' -ErrorAction SilentlyContinue |
-        Sort-Object { [version]($_.Directory.Name) } -ErrorAction SilentlyContinue |
-        Select-Object -Last 1 -ExpandProperty FullName
+        ForEach-Object {
+            $v = $null
+            if ([version]::TryParse($_.Directory.Name, [ref]$v)) { [pscustomobject]@{ Version = $v; Path = $_.FullName } }
+        } |
+        Sort-Object Version | Select-Object -Last 1 -ExpandProperty Path
 }
 if (-not $TlbPath -or -not (Test-Path $TlbPath)) {
     throw "TCatSysManager.tlb not found. Install TwinCAT XAE, or pass -TlbPath explicitly."
@@ -59,7 +65,7 @@ public class TlbGen : System.Runtime.InteropServices.ITypeLibImporterNotifySink 
 
     public Assembly Convert(string tlbPath, string nsName) {
         object tlb;
-        LoadTypeLibEx(tlbPath, 0, out tlb); // 0 = REGKIND_DEFAULT
+        LoadTypeLibEx(tlbPath, 2, out tlb); // 2 = REGKIND_NONE (load by path; do NOT (re)register the typelib)
         return ConvertObj(tlb, nsName);
     }
 
@@ -82,7 +88,10 @@ public class TlbGen : System.Runtime.InteropServices.ITypeLibImporterNotifySink 
 }
 '@
 
-Add-Type -TypeDefinition $src -Language CSharp | Out-Null
+# Guard against "type TlbGen already exists" if this script is dot-sourced/re-run in one session.
+if (-not ([System.Management.Automation.PSTypeName]'TlbGen').Type) {
+    Add-Type -TypeDefinition $src -Language CSharp | Out-Null
+}
 
 # AssemblyBuilder.Save writes relative to the process working directory; run from outDir.
 Push-Location $outDir
