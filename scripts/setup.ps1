@@ -33,7 +33,7 @@ if (Test-Path $vswhere) {
 }
 
 # Check .NET Framework targeting pack
-$targetingPackPath = "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2"
+$targetingPackPath = "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2"
 if (Test-Path $targetingPackPath) {
     Write-Host "✅ .NET Framework 4.7.2 Targeting Pack installed" -ForegroundColor Green
 } else {

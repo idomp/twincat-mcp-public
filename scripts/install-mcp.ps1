@@ -53,11 +53,12 @@ try {
     exit 1
 }
 
-# Check MCP package is installed
-$mcpCheck = pip show mcp 2>&1
+# Check MCP package is installed. Use `python -m pip` so it runs against the
+# interpreter we just verified on PATH (a bare `pip` may be missing/mismatched).
+$mcpCheck = & python -m pip show mcp 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing MCP Python package..." -ForegroundColor Yellow
-    pip install mcp
+    & python -m pip install mcp
     if ($LASTEXITCODE -ne 0) {
         Write-Host "❌ Failed to install MCP package" -ForegroundColor Red
         exit 1
@@ -65,8 +66,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "✅ MCP Python package installed" -ForegroundColor Green
 
-# Build MCP server JSON configuration (escape quotes for cmd.exe)
-$mcpServerJson = '{\"name\":\"twincat-automation\",\"type\":\"stdio\",\"command\":\"python\",\"args\":[\"' + $serverPath + '\"]}'
+# Build MCP server JSON configuration. ConvertTo-Json handles escaping, and we
+# pass it to the VS Code CLI directly (no `cmd /c`) so a server path containing
+# spaces survives as a single argument.
+$mcpServerJson = @{
+    name    = "twincat-automation"
+    type    = "stdio"
+    command = "python"
+    args    = @($serverPath)
+} | ConvertTo-Json -Compress
 
 if ($Workspace) {
     # Install to workspace .vscode folder
@@ -89,7 +97,9 @@ if ($Workspace) {
 	}
 }
 "@
-    Set-Content -Path $mcpJsonPath -Value $mcpConfig -Encoding UTF8
+    # Write BOM-less UTF-8 (Set-Content -Encoding UTF8 emits a BOM on Windows
+    # PowerShell 5.1, which some JSON/MCP loaders reject).
+    [System.IO.File]::WriteAllText($mcpJsonPath, $mcpConfig, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host ""
     Write-Host "✅ Installed to workspace: $mcpJsonPath" -ForegroundColor Green
 } else {
@@ -103,7 +113,7 @@ if ($Workspace) {
     
     if (-not $Insiders -and $vsCodeStable) {
         Write-Host "Installing to VS Code..." -ForegroundColor Gray
-        $result = cmd /c "code --add-mcp `"$mcpServerJson`"" 2>&1
+        $result = & $vsCodeStable.Source --add-mcp $mcpServerJson 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "✅ Installed to VS Code" -ForegroundColor Green
             $installed = $true
@@ -114,7 +124,8 @@ if ($Workspace) {
     
     if ($Insiders -or $vsCodeInsiders) {
         Write-Host "Installing to VS Code Insiders..." -ForegroundColor Gray
-        $result = cmd /c "code-insiders --add-mcp `"$mcpServerJson`"" 2>&1
+        $insidersExe = if ($vsCodeInsiders) { $vsCodeInsiders.Source } else { "code-insiders" }
+        $result = & $insidersExe --add-mcp $mcpServerJson 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "✅ Installed to VS Code Insiders" -ForegroundColor Green
             $installed = $true

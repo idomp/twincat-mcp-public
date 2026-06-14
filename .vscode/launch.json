@@ -3,10 +3,10 @@
   "configurations": [
     {
       "name": "TcAutomation - Build",
-      "type": "coreclr",
+      "type": "clr",
       "request": "launch",
       "preLaunchTask": "build-tcautomation",
-      "program": "${workspaceFolder}/TcAutomation/bin/Debug/net8.0-windows/TcAutomation.exe",
+      "program": "${workspaceFolder}/TcAutomation/bin/Release/TcAutomation.exe",
       "args": ["build", "--solution", "${input:solutionPath}"],
       "cwd": "${workspaceFolder}/TcAutomation",
       "console": "integratedTerminal",
@@ -14,10 +14,10 @@
     },
     {
       "name": "TcAutomation - Info",
-      "type": "coreclr",
+      "type": "clr",
       "request": "launch",
       "preLaunchTask": "build-tcautomation",
-      "program": "${workspaceFolder}/TcAutomation/bin/Debug/net8.0-windows/TcAutomation.exe",
+      "program": "${workspaceFolder}/TcAutomation/bin/Release/TcAutomation.exe",
       "args": ["info", "--solution", "${input:solutionPath}"],
       "cwd": "${workspaceFolder}/TcAutomation",
       "console": "integratedTerminal",
