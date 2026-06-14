@@ -28,8 +28,8 @@ Unofficial. Not affiliated with Beckhoff.
 ## Install
 
 ```powershell
-git clone https://github.com/eponce92/twincat-mcp.git
-cd twincat-mcp
+git clone https://github.com/idomp/twincat-mcp-public.git
+cd twincat-mcp-public
 .\setup.bat
 ```
 
