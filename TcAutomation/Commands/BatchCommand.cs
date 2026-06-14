@@ -194,7 +194,9 @@ namespace TcAutomation.Commands
                 batchResult.Success = batchResult.FailedStepIndex < 0;
                 if (!batchResult.Success && string.IsNullOrEmpty(batchResult.ErrorMessage))
                 {
-                    var failedStep = batchResult.Results.Count > 0 ? batchResult.Results[batchResult.Results.Count - 1] : null;
+                    var failedStep = (batchResult.FailedStepIndex >= 0 && batchResult.FailedStepIndex < batchResult.Results.Count)
+                        ? batchResult.Results[batchResult.FailedStepIndex]
+                        : null;
                     batchResult.ErrorMessage = failedStep?.Error ?? "Batch failed";
                 }
             }
