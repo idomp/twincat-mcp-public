@@ -292,7 +292,8 @@ namespace TcAutomation.Commands
                     if (!string.IsNullOrEmpty(plcName) && !plcProjectName.Equals(plcName, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    ITcPlcProject iecProject = (ITcPlcProject)plcProject;
+                    if (!(plcProject is ITcPlcProject iecProject))
+                        continue;  // skip non-IEC children (folders / other node types)
                     iecProject.BootProjectAutostart = true;
 
                     // Get AMS port from project XML (read-only)
@@ -409,7 +410,13 @@ namespace TcAutomation.Commands
                 string currentTestSuite = "";
                 string currentTestName = "";
 
-                while (DateTime.Now < timeout)
+                // Give the results-poll phase its own full budget. Reaching Run
+                // can consume most of `timeout`; reusing that same deadline here
+                // would leave little/no time to poll and produce a false
+                // "TcUnit results not received within timeout".
+                var pollDeadline = DateTime.Now.AddMinutes(timeoutMinutes);
+
+                while (DateTime.Now < pollDeadline)
                 {
                     Thread.Sleep(5000);
                     pollCount++;
