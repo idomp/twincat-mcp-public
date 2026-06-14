@@ -289,9 +289,8 @@ namespace TcAutomation.Core
                         string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
                             ?? throw new ArgumentException("read-var-list requires args.amsNetId");
                         int port = GetInt(argsElement, "port", hasArgs) ?? 851;
-                        string symbolsCsv = GetString(argsElement, "symbols", hasArgs)
+                        string[] symbols = GetStringArray(argsElement, "symbols", hasArgs)
                             ?? throw new ArgumentException("read-var-list requires args.symbols");
-                        string[] symbols = symbolsCsv.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
                         return ExecuteAdsStep(() => ReadVariableListCommand.Execute(amsNetId, port, symbols));
                     }
                     case "write-var-list":
@@ -422,6 +421,53 @@ namespace TcAutomation.Core
                         return null;
                     return property.Value.ToString();
                 }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Read a string list arg. Accepts a JSON array (preferred — preserves
+        /// commas, order, and duplicates), a JSON-array string, or a legacy
+        /// comma-separated string (trimmed). Returns null if the arg is absent.
+        /// </summary>
+        public static string[]? GetStringArray(JsonElement args, string name, bool hasArgs)
+        {
+            if (!hasArgs) return null;
+            foreach (var property in args.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var value = property.Value;
+                if (value.ValueKind == JsonValueKind.Array)
+                {
+                    var list = new List<string>();
+                    foreach (var item in value.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.Null) continue;
+                        var s = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString();
+                        if (!string.IsNullOrEmpty(s)) list.Add(s);
+                    }
+                    return list.ToArray();
+                }
+                if (value.ValueKind == JsonValueKind.String)
+                {
+                    var raw = value.GetString();
+                    if (string.IsNullOrEmpty(raw)) return new string[0];
+                    if (raw.TrimStart().StartsWith("["))
+                    {
+                        try
+                        {
+                            var arr = JsonSerializer.Deserialize<string[]>(raw);
+                            if (arr != null) return arr;
+                        }
+                        catch { /* not a JSON array — fall back to CSV */ }
+                    }
+                    var parts = raw.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    for (int i = 0; i < parts.Length; i++) parts[i] = parts[i].Trim();
+                    return parts;
+                }
+                return null;
             }
             return null;
         }
