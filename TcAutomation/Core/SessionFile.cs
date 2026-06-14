@@ -87,9 +87,13 @@ namespace TcAutomation.Core
             string tmp = path + ".tmp";
 
             File.WriteAllText(tmp, JsonSerializer.Serialize(this, JsonOptions));
-            // Atomic swap so readers never see a half-written file.
-            if (File.Exists(path)) File.Delete(path);
-            File.Move(tmp, path);
+            // Atomic swap so readers never see a half-written OR missing file.
+            // File.Replace is atomic on NTFS; File.Move covers the first write
+            // (Replace requires the destination to already exist).
+            if (File.Exists(path))
+                File.Replace(tmp, path, null);
+            else
+                File.Move(tmp, path);
         }
 
         public static SessionFile? TryLoad(string path)
@@ -147,7 +151,10 @@ namespace TcAutomation.Core
 
                 if (!string.IsNullOrEmpty(recordedStartTimeUtc))
                 {
-                    if (DateTime.TryParse(recordedStartTimeUtc, out var recorded))
+                    if (DateTime.TryParse(recordedStartTimeUtc,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.RoundtripKind | System.Globalization.DateTimeStyles.AssumeUniversal,
+                            out var recorded))
                     {
                         var actual = p.StartTime.ToUniversalTime();
                         var diff = Math.Abs((actual - recorded.ToUniversalTime()).TotalSeconds);
