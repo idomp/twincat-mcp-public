@@ -169,7 +169,8 @@ namespace TcAutomation.Commands
 
                     if (!dryRun)
                     {
-                        ITcPlcProject iecProject = (ITcPlcProject)plcProject;
+                        if (!(plcProject is ITcPlcProject iecProject))
+                            continue;  // skip non-IEC children (folders / other node types)
                         iecProject.BootProjectAutostart = true;
                         iecProject.GenerateBootProject(true);
                     }
