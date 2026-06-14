@@ -60,18 +60,16 @@ namespace TcAutomation.Core
 
             foreach (var line in File.ReadLines(projectFilePath))
             {
-                if (line.Contains("TcVersion"))
+                // Extract version from TcVersion="X.X.X.X"
+                const string marker = "TcVersion=\"";
+                int idx = line.IndexOf(marker, StringComparison.Ordinal);
+                if (idx >= 0)
                 {
-                    // Extract version from TcVersion="X.X.X.X"
-                    int start = line.IndexOf("TcVersion=\"") + 11;
-                    if (start > 10)
+                    var substring = line.Substring(idx + marker.Length);
+                    int end = substring.IndexOf('"');
+                    if (end > 0)
                     {
-                        var substring = line.Substring(start);
-                        int end = substring.IndexOf('"');
-                        if (end > 0)
-                        {
-                            return substring.Substring(0, end);
-                        }
+                        return substring.Substring(0, end);
                     }
                 }
             }
