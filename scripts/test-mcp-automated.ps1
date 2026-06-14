@@ -11,7 +11,8 @@
 # Run this after making changes to verify nothing is broken.
 
 param(
-    [string]$Solution = "F:\Redwood_Work_Repos\rw-tcunit-runner-eponce-cicd_improvements\Twincat_Project_For_Testing_MCP\MPC_Test_playground\TwinCAT Project1.sln",
+    # Provide a solution via -Solution or the TWINCAT_TEST_SOLUTION env var.
+    [string]$Solution = $env:TWINCAT_TEST_SOLUTION,
     [switch]$SkipBuild
 )
 
@@ -180,7 +181,7 @@ if (-not $SkipBuild) {
 Write-TestHeader "MCP Server - find_tc_automation_exe()"
 
 Push-Location $McpServerDir
-$pythonTest = (python -c "import sys; sys.path.insert(0,'.'); from server import find_tc_automation_exe; print(find_tc_automation_exe())" 2>&1) -join "`n"
+$pythonTest = (python -c "import sys; sys.path.insert(0,'.'); from twincat_mcp.cli import find_tc_automation_exe; print(find_tc_automation_exe())" 2>&1) -join "`n"
 Pop-Location
 
 $findExeWorks = $pythonTest -match "TcAutomation.exe"
@@ -198,7 +199,7 @@ $pythonInfoTest = python -c @"
 import sys
 import json
 sys.path.insert(0,'.')
-from server import run_tc_automation
+from twincat_mcp.cli import run_tc_automation
 r = run_tc_automation('info', ['--solution', r'$Solution'])
 print(json.dumps({'tcVersion': r.get('tcVersion'), 'plcCount': len(r.get('plcProjects', []))}))
 "@ 2>&1
@@ -229,7 +230,7 @@ if (-not $SkipBuild) {
 import sys
 import json
 sys.path.insert(0,'.')
-from server import run_tc_automation
+from twincat_mcp.cli import run_tc_automation
 r = run_tc_automation('build', ['--solution', r'$Solution', '--clean'])
 print(json.dumps({'success': r.get('success'), 'errorCount': r.get('errorCount'), 'warningCount': r.get('warningCount')}))
 "@ 2>&1
