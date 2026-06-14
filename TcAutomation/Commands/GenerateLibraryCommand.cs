@@ -631,19 +631,33 @@ namespace TcAutomation.Commands
             const int maxWaitMs = 3000;
             const int pollMs = 150;
             int waited = 0;
+            long lastLen = -1;
 
             while (waited <= maxWaitMs)
             {
                 if (File.Exists(outputLibraryPath))
                 {
-                    return true;
+                    long len = 0;
+                    try { len = new FileInfo(outputLibraryPath).Length; } catch { }
+                    // A 0-byte or partially-written file is NOT success — the
+                    // brute-force method loop must keep probing. Require a
+                    // non-empty file whose size has settled across two polls
+                    // (COM may still be flushing the .library archive).
+                    if (len > 0 && len == lastLen)
+                    {
+                        return true;
+                    }
+                    lastLen = len;
                 }
 
                 Thread.Sleep(pollMs);
                 waited += pollMs;
             }
 
-            return false;
+            // Accept a non-empty file written just before the deadline even if
+            // we didn't catch two equal readings; still reject 0-byte output.
+            try { return File.Exists(outputLibraryPath) && new FileInfo(outputLibraryPath).Length > 0; }
+            catch { return false; }
         }
 
         private static void BackupExistingLibraryWithTimestamp(string outputLibraryPath)
