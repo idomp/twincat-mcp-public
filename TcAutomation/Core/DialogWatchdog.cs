@@ -122,6 +122,15 @@ namespace TcAutomation.Core
 
                 if (_running) return;
 
+                // A prior worker may still be alive if its Join timed out in
+                // Stop() (e.g. stuck in EnumWindows). Reuse it rather than
+                // spawning a second concurrent watchdog.
+                if (_thread != null && _thread.IsAlive)
+                {
+                    _running = true;
+                    return;
+                }
+
                 _running = true;
                 _thread = new Thread(Run)
                 {
@@ -161,13 +170,22 @@ namespace TcAutomation.Core
                 {
                     _running = false;
                     toJoin = _thread;
-                    _thread = null;
                 }
             }
 
             if (toJoin != null)
             {
-                try { toJoin.Join(1000); } catch { }
+                bool exited = false;
+                try { exited = toJoin.Join(1000); } catch { }
+                lock (_lock)
+                {
+                    // Only clear the reference once the worker has actually
+                    // exited AND a new Start() hasn't already replaced it. If the
+                    // Join timed out, keep it so the next Start() sees it's still
+                    // alive and won't spawn a duplicate watchdog.
+                    if (exited && ReferenceEquals(_thread, toJoin))
+                        _thread = null;
+                }
             }
         }
 
@@ -235,10 +253,10 @@ namespace TcAutomation.Core
                     Console.Error.WriteLine(
                         "[DialogWatchdog] Auto-dismissing modified-outside dialog " +
                         $"(pid={winPid}, title='{t}')");
-                    if (!ClickButton(hWnd, "Reload &All")
-                        && !ClickButton(hWnd, "&Reload")
-                        && !ClickButton(hWnd, "Yes to &All")
-                        && !ClickButton(hWnd, "&Yes"))
+                    if (!ClickButton(hWnd, winPid, "Reload &All")
+                        && !ClickButton(hWnd, winPid, "&Reload")
+                        && !ClickButton(hWnd, winPid, "Yes to &All")
+                        && !ClickButton(hWnd, winPid, "&Yes"))
                     {
                         Console.Error.WriteLine(
                             "[DialogWatchdog] ... no known Reload/Yes button found; leaving dialog");
@@ -252,8 +270,8 @@ namespace TcAutomation.Core
             {
                 Console.Error.WriteLine(
                     $"[DialogWatchdog] Auto-dismissing 'Conflicting File Modification' dialog (pid={winPid})");
-                if (!ClickButton(hWnd, "Reload &All"))
-                    ClickButton(hWnd, "&Ignore");
+                if (!ClickButton(hWnd, winPid, "Reload &All"))
+                    ClickButton(hWnd, winPid, "&Ignore");
                 return true;
             }
 
@@ -263,7 +281,7 @@ namespace TcAutomation.Core
             {
                 Console.Error.WriteLine(
                     $"[DialogWatchdog] Auto-dismissing 'Target fatal error' dialog (pid={winPid})");
-                ClickButton(hWnd, "OK");
+                ClickButton(hWnd, winPid, "OK");
                 return true;
             }
 
@@ -287,8 +305,19 @@ namespace TcAutomation.Core
             return found;
         }
 
-        private static bool ClickButton(IntPtr dialog, string buttonText)
+        private static bool ClickButton(IntPtr dialog, uint expectedPid, string buttonText)
         {
+            // Re-verify ownership immediately before acting. The membership check
+            // in OnWindow ran earlier and outside the lock, so confirm the window
+            // still belongs to the expected, still-monitored PID right now —
+            // otherwise skip (defends against a deregister / PID-reuse race).
+            GetWindowThreadProcessId(dialog, out var nowPid);
+            if (nowPid != expectedPid) return false;
+            lock (_lock)
+            {
+                if (!_pidRefCounts.ContainsKey((int)nowPid)) return false;
+            }
+
             IntPtr btn = FindChildButton(dialog, buttonText);
             if (btn != IntPtr.Zero)
             {
