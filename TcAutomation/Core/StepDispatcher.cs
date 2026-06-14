@@ -459,7 +459,13 @@ namespace TcAutomation.Core
                         try
                         {
                             var arr = JsonSerializer.Deserialize<string[]>(raw);
-                            if (arr != null) return arr;
+                            if (arr != null)
+                            {
+                                var cleaned = new List<string>();
+                                foreach (var s in arr)
+                                    if (!string.IsNullOrEmpty(s)) cleaned.Add(s);
+                                return cleaned.ToArray();
+                            }
                         }
                         catch { /* not a JSON array — fall back to CSV */ }
                     }
