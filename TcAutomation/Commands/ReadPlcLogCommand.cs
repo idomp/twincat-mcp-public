@@ -39,6 +39,7 @@ namespace TcAutomation.Commands
 
             TcEventLogger? logger = null;
             var lockObj = new object();
+            int totalSeen = 0;  // every matching event, including those dropped past maxResults
             int lcid = CultureInfo.CurrentCulture.LCID;
             string containsLower = (contains ?? "").ToLowerInvariant();
             bool hasFilter = containsLower.Length > 0;
@@ -54,6 +55,7 @@ namespace TcAutomation.Commands
 
                     lock (lockObj)
                     {
+                        totalSeen++;
                         if (result.Events.Count >= maxResults)
                         {
                             result.Truncated = true;
@@ -135,7 +137,9 @@ namespace TcAutomation.Commands
                 Thread.Sleep(totalMs);
 
                 result.Success = true;
-                result.TotalCaptured = result.Events.Count;
+                // True number of matching events during the window; Events may be
+                // fewer when Truncated (capped at maxResults).
+                result.TotalCaptured = totalSeen;
                 Emit(result);
                 return 0;
             }

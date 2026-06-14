@@ -33,6 +33,17 @@ namespace TcAutomation
         [STAThread] // Required for COM STA thread
         static int Main(string[] args)
         {
+            // Speak UTF-8 on the console pipes so non-ASCII (symbol names,
+            // localized log/error text) round-trips correctly to the Python MCP
+            // server, which reads stdout/stderr as UTF-8. Guarded because the
+            // streams may be redirected or absent.
+            try
+            {
+                Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+                Console.InputEncoding = new System.Text.UTF8Encoding(false);
+            }
+            catch { /* no console / redirected — non-fatal */ }
+
             // The persistent host owns its own MessageFilter lifetime across many
             // requests, so do NOT wrap it with the outer Register/Revoke. All
             // other subcommands get the existing global registration.
