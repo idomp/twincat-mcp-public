@@ -406,7 +406,7 @@ async def handle_ads_record(arguments: dict, tool_start_time: float) -> list[Tex
     args = [
         "--amsnetid", ams_net_id,
         "--port", str(port),
-        "--variables", ",".join(variables),
+        "--variables", ",".join(str(v) for v in variables),
         "--sampletime", str(sample_time_ms),
         "--duration", str(duration_sec),
         "--output", output_path,

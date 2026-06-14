@@ -132,7 +132,7 @@ async def handle_scope_create_config(arguments: dict, tool_start_time: float) ->
     args = [
         "--amsnetid", ams_net_id,
         "--port", str(port),
-        "--variables", ",".join(variables),
+        "--variables", ",".join(str(v) for v in variables),
         "--sampletime", str(sample_time_ms),
         "--output", output_path,
         "--chartname", chart_name,
