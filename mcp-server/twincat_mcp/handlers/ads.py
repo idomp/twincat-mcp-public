@@ -322,15 +322,18 @@ async def handle_write_var(arguments: dict, tool_start_time: float) -> list[Text
 @register("twincat_read_var_list")
 async def handle_read_var_list(arguments: dict, tool_start_time: float) -> list[TextContent]:
     ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
-    symbols: list = arguments.get("symbols", [])
+    symbols = arguments.get("symbols", [])
     port = arguments.get("port", 851)
 
     # Send symbols as a JSON array (preserves commas in array indices, order,
-    # and duplicates); the dispatcher accepts an array directly.
+    # and duplicates); the dispatcher accepts an array directly. A string is
+    # passed through unchanged (the dispatcher also accepts a JSON-array string
+    # or a comma-separated string) — never iterate it into characters.
+    step_symbols = symbols if isinstance(symbols, str) else [str(s) for s in symbols]
     result, _ = run_shell_step(
         "read-var-list", {
             "amsNetId": ams_net_id,
-            "symbols": [str(s) for s in symbols],
+            "symbols": step_symbols,
             "port": port,
         },
         timeout_minutes=1,
