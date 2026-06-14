@@ -117,6 +117,10 @@ namespace TcAutomation.Commands
                     uint startTriggerHandle = 0;
                     uint stopTriggerHandle = 0;
 
+                    // Periodic sampler (started once data channels are registered).
+                    var samplerStop = new ManualResetEventSlim(false);
+                    Thread samplerThread = null;
+
                     // Create notification settings
                     var settings = new NotificationSettings(AdsTransMode.Cyclic, sampleTimeMs, 0);
 
@@ -160,17 +164,14 @@ namespace TcAutomation.Commands
                             if (!handleToIndex.TryGetValue(e.Handle, out idx))
                                 return;
 
+                            // Update this channel's latest value only. Row emission
+                            // is done by the periodic sampler below, so each row
+                            // reflects all channels at a fixed cadence and never
+                            // depends on one channel's notification arriving (the
+                            // old idx==0 gate dropped every row if channel 0 lagged).
                             var bytes = e.Data.ToArray();
                             latestValues[idx] = ConvertToDouble(bytes, symbolInfos[idx].TypeName);
                             latestTimestamp = e.TimeStamp;
-
-                            // When channel 0 fires (or single variable), snapshot a row
-                            if (idx == 0 || variables.Length == 1)
-                            {
-                                var snapshot = new double[variables.Length];
-                                Array.Copy(latestValues, snapshot, variables.Length);
-                                rows.Enqueue((latestTimestamp, snapshot));
-                            }
                         }
                     };
 
@@ -208,6 +209,30 @@ namespace TcAutomation.Commands
                             handles[i] = handle;
                             handleToIndex.TryAdd(handle, i);
                         }
+
+                        // Start the periodic sampler now that channels are
+                        // registered. It emits one row every sampleTimeMs from a
+                        // snapshot of all latest values while recording is active.
+                        int sampleIntervalMs = Math.Max(1, sampleTimeMs);
+                        samplerThread = new Thread(() =>
+                        {
+                            while (!samplerStop.Wait(sampleIntervalMs))
+                            {
+                                if (Volatile.Read(ref recording) != 1)
+                                    continue;
+                                double[] snapshot;
+                                lock (valuesLock)
+                                {
+                                    if (latestTimestamp == default)
+                                        continue;  // no data has arrived yet
+                                    snapshot = new double[variables.Length];
+                                    Array.Copy(latestValues, snapshot, variables.Length);
+                                }
+                                rows.Enqueue((DateTimeOffset.UtcNow, snapshot));
+                            }
+                        })
+                        { IsBackground = true, Name = "AdsRecordSampler" };
+                        samplerThread.Start();
 
                         // === Trigger-wait phase ===
                         // maxTimeSec caps only how long we wait for the start trigger.
@@ -262,6 +287,10 @@ namespace TcAutomation.Commands
                     }
                     finally
                     {
+                        // Stop the sampler first so no rows are enqueued during teardown.
+                        samplerStop.Set();
+                        try { samplerThread?.Join(1000); } catch { }
+
                         // Cleanup trigger notifications
                         if (startTriggerHandle != 0)
                         {
