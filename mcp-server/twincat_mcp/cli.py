@@ -71,6 +71,8 @@ def run_tc_automation(command: str, args: list[str]) -> dict:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             cwd=str(exe_path.parent),
         )
@@ -125,6 +127,8 @@ def run_tc_automation_with_progress(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(exe_path.parent),
         )
 

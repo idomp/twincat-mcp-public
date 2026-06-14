@@ -169,6 +169,15 @@ def test_is_local_target_remote():
     assert is_local_target("10.0.0.1.1.1") is False
 
 
+def test_is_local_target_127_prefixed_remote_is_not_local():
+    # An AMS Net ID is not an IP: 127.0.0.10.x / 127.0.0.100.x are distinct
+    # REMOTE targets and must not be mistaken for the loopback 127.0.0.1.x.
+    from twincat_mcp.defaults import is_local_target
+    assert is_local_target("127.0.0.10.1.1") is False
+    assert is_local_target("127.0.0.100.1.1") is False
+    assert is_local_target("127.0.0.11.5.1") is False
+
+
 def test_default_ams_net_id_is_set():
     from twincat_mcp.defaults import DEFAULT_AMS_NET_ID
     assert DEFAULT_AMS_NET_ID and len(DEFAULT_AMS_NET_ID) > 0

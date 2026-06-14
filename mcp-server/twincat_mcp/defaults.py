@@ -202,9 +202,14 @@ def resolve_ams_net_id(value: Optional[str]) -> str:
 
 def is_local_target(ams_net_id: Optional[str]) -> bool:
     """
-    True when `ams_net_id` targets the local runtime. The check matches
-    any `127.0.0.1.*` form — TwinCAT uses `127.0.0.1.1.1` but we stay
-    tolerant of alternate port suffixes agents might try.
+    True when `ams_net_id` targets the local runtime. Local means the first
+    four octets are exactly `127.0.0.1` (TwinCAT uses `127.0.0.1.1.1`); we
+    stay tolerant of alternate port suffixes agents might try.
+
+    The match is on octet boundaries, NOT a string prefix: an AMS Net ID is
+    not an IP address, so `127.0.0.10.1.1` / `127.0.0.100.1.1` are distinct
+    *remote* targets and must not be mistaken for the loopback. A naive
+    `startswith("127.0.0.1")` would match them and skip the arming gate.
 
     `None` / empty is treated as local, because the fallback default is
     local and we don't want the safety gate to fire before
@@ -212,7 +217,8 @@ def is_local_target(ams_net_id: Optional[str]) -> bool:
     """
     if not ams_net_id:
         return True
-    return ams_net_id.strip().startswith("127.0.0.1")
+    octets = ams_net_id.strip().split(".")
+    return octets[:4] == ["127", "0", "0", "1"]
 
 
 def describe_default_for_schema() -> str:
