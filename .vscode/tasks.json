@@ -4,10 +4,10 @@
     {
       "label": "build-tcautomation",
       "type": "shell",
-      "command": "dotnet",
-      "args": ["build", "-c", "Debug"],
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/build.ps1"],
       "options": {
-        "cwd": "${workspaceFolder}/TcAutomation"
+        "cwd": "${workspaceFolder}"
       },
       "group": "build",
       "problemMatcher": "$msCompile"
@@ -15,10 +15,10 @@
     {
       "label": "publish-tcautomation",
       "type": "shell",
-      "command": "dotnet",
-      "args": ["publish", "-c", "Release", "-r", "win-x64", "--self-contained", "false", "-o", "publish"],
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/publish.ps1"],
       "options": {
-        "cwd": "${workspaceFolder}/TcAutomation"
+        "cwd": "${workspaceFolder}"
       },
       "group": "build",
       "problemMatcher": "$msCompile"
