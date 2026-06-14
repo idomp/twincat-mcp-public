@@ -1,0 +1,37 @@
+<Project>
+  <!--
+    Part of the opt-in /p:NoVisualStudioBuild=true path (see Directory.Build.props).
+    Imported AFTER the csproj body, so the <COMReference> items already exist.
+
+    A TcXaeShell-only machine has no Windows SDK, so MSBuild's ResolveComReference task
+    (which needs TlbImp.exe / AxImp.exe) cannot run. We remove the COM references and bind
+    to managed interops instead:
+      - EnvDTE / EnvDTE80  -> official NuGet PIAs (added in Directory.Build.props)
+      - TCatSysManagerLib  -> interop\Interop.TCatSysManagerLib.dll, pre-generated from
+                              C:\TwinCAT\3.1\Components\Base\TypeLib\<ver>\TCatSysManager.tlb
+                              via TypeLibConverter (see gen-interop.ps1).
+    Net effect: identical references, but ResolveComReference is never invoked.
+    No-op unless NoVisualStudioBuild=true, so Visual Studio builds are unaffected.
+  -->
+  <ItemGroup Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <!-- Remove only the COM references we replace, by identity. A future <COMReference>
+         is left intact (it would fail loudly at ResolveComReference, prompting an update
+         here) rather than being silently dropped by a blanket Remove="@(COMReference)". -->
+    <COMReference Remove="TCatSysManagerLib" />
+    <COMReference Remove="EnvDTE" />
+    <COMReference Remove="EnvDTE80" />
+    <Reference Include="Interop.TCatSysManagerLib">
+      <HintPath>$(MSBuildThisFileDirectory)interop\Interop.TCatSysManagerLib.dll</HintPath>
+      <Private>true</Private>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Fail early with a clear message if the generated interop is missing (e.g. when
+       msbuild /p:NoVisualStudioBuild=true is run directly instead of via build-no-vs.ps1). -->
+  <Target Name="EnsureTCatInterop" BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)interop\Interop.TCatSysManagerLib.dll')"
+           Text="Interop.TCatSysManagerLib.dll not found. Run TcAutomation\gen-interop.ps1 under Windows PowerShell 5.1, or build via scripts\build-no-vs.ps1." />
+  </Target>
+</Project>
