@@ -126,6 +126,12 @@ class ShellHost:
     # Time to wait for the "ready" handshake line on startup.
     READY_TIMEOUT_SEC = 30.0
 
+    # Time to wait for a graceful shutdown before killing the host. It must
+    # exceed the host's own teardown bound (TeardownTimeoutMs, 30 s, in
+    # VisualStudioInstance.cs) plus up to 5 s for its kill to confirm. A kill
+    # before that leaves the shell running without the process that owns it.
+    SHUTDOWN_TIMEOUT_SEC = 40.0
+
     def __init__(self, exe_path: Path):
         self._exe_path = exe_path
         self._proc: subprocess.Popen | None = None
@@ -271,7 +277,7 @@ class ShellHost:
 
                 return inner, progress
 
-    def shutdown(self, timeout: float = 8.0):
+    def shutdown(self, timeout: float = SHUTDOWN_TIMEOUT_SEC):
         """Politely ask the host to shut down; force-kill if it won't."""
         with self._lock:
             if not self.is_alive():
@@ -514,7 +520,7 @@ def shutdown_shell_host() -> None:
     if host is None:
         return
     try:
-        host.shutdown(timeout=8.0)
+        host.shutdown()
     except Exception:
         pass
     _shell_host = None

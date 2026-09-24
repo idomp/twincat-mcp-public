@@ -370,51 +370,99 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Close Visual Studio instance. Terminates the owned shell through its
-        /// launch handle if DTE.Quit() leaves it running.
+        /// Upper bound on COM teardown in Close(). RestoreDteOptions and Quit
+        /// can block behind a modal dialog indefinitely (measured: a "changed
+        /// outside the environment" modal held Close() for over 90 s). When
+        /// the bound expires, the owned shell is terminated through its launch
+        /// handle, and the blocked call then fails instead of waiting. The
+        /// bound holds only when that kill succeeds. An unconfirmed kill
+        /// leaves the call blocked, and the session record is kept.
+        /// Normal teardown takes about 5.5 s.
+        /// </summary>
+        private const int TeardownTimeoutMs = 30000;
+
+        /// <summary>
+        /// Close Visual Studio instance. Terminates the owned shell if Quit
+        /// leaves it running or does not return within the teardown bound.
         /// </summary>
         public void Close()
         {
-            // Stop the watchdog FIRST so it doesn't race DTE teardown by
-            // calling MainWindow on a dying COM object.
-            StopVisibilityWatchdog();
-
-            // Deregister from the dialog-dismisser before the PID becomes
-            // reused by the OS. Stop is idempotent / ref-counted, so
-            // double-Stop (e.g. from Dispose) is safe.
-            if (_dialogWatchdogPid.HasValue)
+            // Armed before any call that can block. It runs on a pool thread,
+            // so a stuck STA call cannot delay it.
+            using (new Timer(_ =>
+                   {
+                       try { KillOwnedProcess($"teardown exceeded {TeardownTimeoutMs / 1000} s"); } catch { }
+                   }, null, TeardownTimeoutMs, Timeout.Infinite))
             {
-                try { DialogWatchdog.Stop(_dialogWatchdogPid.Value); } catch { }
-                _dialogWatchdogPid = null;
-            }
+                // Stop the watchdog FIRST so it doesn't race DTE teardown by
+                // calling MainWindow on a dying COM object.
+                StopVisibilityWatchdog();
 
-            try
-            {
-                if (_dte != null)
+                // Deregister from the dialog-dismisser before the PID becomes
+                // reused by the OS. Stop is idempotent / ref-counted, so
+                // double-Stop (e.g. from Dispose) is safe.
+                if (_dialogWatchdogPid.HasValue)
                 {
-                    // Restore any user preferences we tweaked at startup BEFORE
-                    // Quit, because Quit may persist the current (our-modified)
-                    // values to the registry profile.
-                    RestoreDteOptions();
+                    try { DialogWatchdog.Stop(_dialogWatchdogPid.Value); } catch { }
+                    _dialogWatchdogPid = null;
+                }
 
-                    Thread.Sleep(3000); // Avoid busy errors
-                    try
+                try
+                {
+                    // A shell that already exited has nothing to restore or
+                    // quit, and every COM call on it would only fail.
+                    if (_dte != null && IsOwnedProcessRunning)
                     {
-                        _dte.Quit();
-                        Thread.Sleep(5000);
+                        // Restore any user preferences we tweaked at startup BEFORE
+                        // Quit, because Quit may persist the current (our-modified)
+                        // values to the registry profile.
+                        try { RestoreDteOptions(); } catch { }
                     }
-                    catch { }
+
+                    // Checked again. When a modal blocked the restore, the
+                    // timer has ended the shell by now, and the sleep and Quit
+                    // would only add to the teardown.
+                    if (_dte != null && IsOwnedProcessRunning)
+                    {
+                        Thread.Sleep(3000); // Avoid busy errors
+                        try { _dte.Quit(); }
+                        catch { }
+                        // Up to 5 s for the shell to exit on its own. It
+                        // usually does within a second or two, and a fixed
+                        // sleep here outlasted the client's shutdown wait.
+                        WaitForOwnedExit(5000);
+                    }
+                }
+                finally
+                {
+                    // Runs whether or not a DTE was ever attached. Startup can fail
+                    // after the shell started but before it published its DTE.
+                    KillOwnedProcess("close");
+                    _dte = null;
+                    _solution = null;
+                    _tcProject = null;
+                    _loaded = false;
                 }
             }
-            finally
+        }
+
+        private void WaitForOwnedExit(int milliseconds)
+        {
+            Process? owned;
+            lock (_ownedProcessLock) { owned = _ownedProcess; }
+            try { owned?.WaitForExit(milliseconds); } catch { }
+        }
+
+        /// <summary>True while the shell this instance started is running.</summary>
+        public bool IsOwnedProcessRunning
+        {
+            get
             {
-                // Runs whether or not a DTE was ever attached. Startup can fail
-                // after the shell started but before it published its DTE.
-                KillOwnedProcess("close");
-                _dte = null;
-                _solution = null;
-                _tcProject = null;
-                _loaded = false;
+                lock (_ownedProcessLock)
+                {
+                    if (_ownedProcess == null) return false;
+                    try { return !_ownedProcess.HasExited; } catch { return true; }
+                }
             }
         }
 
