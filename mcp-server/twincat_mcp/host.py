@@ -118,9 +118,10 @@ class ShellHost:
     # VisualStudioInstance.cs) and up to 120 s for its ROT attach. The
     # activation claim and Solution.Open have no bound of their own. The
     # claim took up to 35 s when measured, and the project search after
-    # Solution.Open gives up after 30 s. This is a budget, not a guaranteed
-    # maximum. A shorter wait reports a lost response for a request the host
-    # still completes.
+    # Solution.Open gives up after 30 s. A version change first closes the
+    # running shell, about 35 s when its kill succeeds. This is a budget,
+    # not a guaranteed maximum. A shorter wait reports a lost response for
+    # a request the host still completes.
     ENSURE_SOLUTION_TIMEOUT_SEC = 400.0
 
     # Time to wait for the "ready" handshake line on startup.
@@ -187,6 +188,12 @@ class ShellHost:
             params = {"solutionPath": solution_path}
             if tc_version:
                 params["tcVersion"] = tc_version
+            # Forget the cached pair first. A failed request can leave the
+            # host holding no solution, for example after a version change
+            # closed the old shell and the new one failed to start. A stale
+            # cache would then skip ensure-solution for the old pair forever.
+            self._current_solution = None
+            self._current_tc_version = None
             res = self._call_raw_locked("ensure-solution", params, timeout=timeout)
             self._current_solution = solution_path
             self._current_tc_version = tc_version
@@ -309,6 +316,10 @@ class ShellHost:
     def _start_locked(self):
         if self.is_alive():
             return
+
+        # A new host holds no solution, whatever the previous one held.
+        self._current_solution = None
+        self._current_tc_version = None
 
         cmd = [str(self._exe_path), "host", "--mcp-pid", str(os.getpid())]
         try:

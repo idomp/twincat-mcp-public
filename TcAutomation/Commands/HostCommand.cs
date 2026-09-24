@@ -248,6 +248,10 @@ namespace TcAutomation.Commands
             bool hasParams = paramsEl.ValueKind == JsonValueKind.Object;
             string? solutionPath = StepDispatcher.GetString(paramsEl, "solutionPath", hasParams);
             string? tcVersionOverride = StepDispatcher.GetString(paramsEl, "tcVersion", hasParams);
+            // The same rule VisualStudioInstance applies: a blank override is
+            // absent. Otherwise the shell selects the project version while
+            // this host records the blank as the loaded version.
+            if (string.IsNullOrWhiteSpace(tcVersionOverride)) tcVersionOverride = null;
 
             if (string.IsNullOrWhiteSpace(solutionPath))
             {
@@ -290,14 +294,26 @@ namespace TcAutomation.Commands
             {
                 EmitProgress($"host: switching solution -> {Path.GetFileName(solutionPath)} ...");
                 var reloadSw = Stopwatch.StartNew();
-                _vsInstance.ReloadSolution(solutionPath, projectTcVersion, tcVersionOverride);
-                try { _vsInstance.CloseAllDocuments(); } catch { }
-                reloadSw.Stop();
-                reloaded = true;
-                EmitProgress($"host: solution reloaded ({reloadSw.Elapsed.TotalSeconds:F1}s)");
+                try
+                {
+                    _vsInstance.ReloadSolution(solutionPath, projectTcVersion, tcVersionOverride);
+                    try { _vsInstance.CloseAllDocuments(); } catch { }
+                    reloadSw.Stop();
+                    reloaded = true;
+                    EmitProgress($"host: solution reloaded ({reloadSw.Elapsed.TotalSeconds:F1}s)");
 
-                _loadedTcVersion = effectiveTcVersion;
-                UpdateSessionFileWithDte(_vsInstance, solutionPath, effectiveTcVersion);
+                    _loadedTcVersion = effectiveTcVersion;
+                    UpdateSessionFileWithDte(_vsInstance, solutionPath, effectiveTcVersion);
+                }
+                catch (ShellRestartRequiredException ex)
+                {
+                    // Thrown before anything was closed. The running shell
+                    // cannot change version, so replace it.
+                    EmitProgress($"host: {ex.Message} Restarting the shell ...");
+                    DiscardShell(_vsInstance, "version change");
+                    OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion);
+                    openedFresh = true;
+                }
             }
             else
             {

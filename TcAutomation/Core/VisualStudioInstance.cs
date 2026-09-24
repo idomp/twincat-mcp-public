@@ -26,7 +26,11 @@ namespace TcAutomation.Core
         private string _solutionFilePath;
         private string _tcVersion;
         private string? _forceTcVersion;
-        
+
+        // The version the running shell selected at launch. It lives as long as
+        // the shell. Null means unknown: a reload must then start a new shell.
+        private string? _shellTcVersion;
+
         private DTE2? _dte;
         private EnvDTE.Solution? _solution;
         private EnvDTE.Project? _tcProject;
@@ -107,10 +111,13 @@ namespace TcAutomation.Core
         {
             _solutionFilePath = solutionFilePath;
             _tcVersion = tcVersion;
-            // PowerShell's string binding can turn a supplied $null into "".
-            // An absent override must not hide the required project baseline.
-            _forceTcVersion = string.IsNullOrWhiteSpace(forceTcVersion) ? null : forceTcVersion;
+            _forceTcVersion = NormalizeOverride(forceTcVersion);
         }
+
+        // PowerShell's string binding can turn a supplied $null into "".
+        // An absent override must not hide the required project baseline.
+        private static string? NormalizeOverride(string? value)
+            => string.IsNullOrWhiteSpace(value) ? null : value;
 
         /// <summary>
         /// Load the Visual Studio DTE instance.
@@ -207,6 +214,22 @@ namespace TcAutomation.Core
             if (_dte == null)
                 throw new InvalidOperationException("DTE not loaded. Call Load() first.");
 
+            // Decide the version before closing anything. A requested version
+            // that is not installed is refused here, with the current solution
+            // still loaded. A different version cannot be selected in place:
+            // measured switching 3.1.4024.78 to .55, the remote manager throws
+            // E_INVALIDARG once a version is active. The caller must start a
+            // new shell for it.
+            //
+            // The comparison uses the version the shell selected at launch.
+            // An unknown version also means a new shell: selecting in place is
+            // exactly what fails.
+            var target = NormalizeOverride(newForceTcVersion) ?? newTcVersion;
+            var manager = (ITcRemoteManager)_dte.GetObject("TcRemoteManager");
+            RequireInstalled(target, InstalledVersions(manager));
+            if (_shellTcVersion == null || !string.Equals(target, _shellTcVersion, StringComparison.Ordinal))
+                throw new ShellRestartRequiredException(_shellTcVersion ?? "an unknown version", target);
+
             // Close the existing solution without saving. We intentionally do not
             // call DTE.Solution.Close(true) because TwinCAT can rewrite files on
             // close, which triggers modal save dialogs.
@@ -237,11 +260,10 @@ namespace TcAutomation.Core
 
             _solutionFilePath = newSolutionFilePath;
             _tcVersion = newTcVersion;
-            _forceTcVersion = newForceTcVersion;
+            _forceTcVersion = NormalizeOverride(newForceTcVersion);
 
-            // Switch TC version in-place. Different solutions may target different
-            // versions; this is cheap when we're just changing a registry-backed
-            // selector on the remote manager.
+            // Same version as the running shell, checked above. This reads it
+            // back and records it again.
             LoadTwinCATVersion();
 
             LoadSolution();
@@ -442,6 +464,7 @@ namespace TcAutomation.Core
                     _solution = null;
                     _tcProject = null;
                     _loaded = false;
+                    _shellTcVersion = null;
                 }
             }
         }
@@ -1190,24 +1213,61 @@ namespace TcAutomation.Core
         private void LoadTwinCATVersion()
         {
             if (_dte == null) throw new InvalidOperationException("DTE not loaded.");
+            // Unknown until the selection is read back. If anything below
+            // throws, the next reload starts a new shell.
+            _shellTcVersion = null;
             var manager = (ITcRemoteManager)_dte.GetObject("TcRemoteManager");
+            var actual = SelectExactTwinCATVersion(_forceTcVersion ?? _tcVersion, InstalledVersions(manager),
+                version => manager.Version = version, () => manager.Version);
+            _shellTcVersion = actual;
+            Console.Error.WriteLine($"[DEBUG] Verified TwinCAT XAE version: {actual}");
+        }
+
+        private static List<string> InstalledVersions(ITcRemoteManager manager)
+        {
             var available = new List<string>();
             foreach (string version in manager.Versions) available.Add(version);
-            var actual = SelectExactTwinCATVersion(_forceTcVersion ?? _tcVersion, available,
-                version => manager.Version = version, () => manager.Version);
-            Console.Error.WriteLine($"[DEBUG] Verified TwinCAT XAE version: {actual}");
+            return available;
+        }
+
+        private static void RequireInstalled(string requested, IEnumerable<string> available)
+        {
+            if (string.IsNullOrWhiteSpace(requested) || !available.Contains(requested, StringComparer.Ordinal))
+                throw new InvalidOperationException($"Requested TwinCAT XAE version '{requested}' is not installed; no fallback is permitted.");
         }
 
         private static string SelectExactTwinCATVersion(string requested, IEnumerable<string> available,
             Action<string> select, Func<string> read)
         {
-            if (string.IsNullOrWhiteSpace(requested) || !available.Contains(requested, StringComparer.Ordinal))
-                throw new InvalidOperationException($"Requested TwinCAT XAE version '{requested}' is not installed; no fallback is permitted.");
-            select(requested);
+            RequireInstalled(requested, available);
+            // Assign only when it changes something. A different value fails
+            // with E_INVALIDARG in a running shell, and a same-value assignment
+            // is not needed.
+            if (!string.Equals(read(), requested, StringComparison.Ordinal))
+                select(requested);
             var actual = read();
             if (!string.Equals(actual, requested, StringComparison.Ordinal))
                 throw new InvalidOperationException($"Requested TwinCAT XAE {requested}, but effective version is {actual}.");
             return actual;
+        }
+    }
+
+    /// <summary>
+    /// A reload needs a TwinCAT XAE version other than the one the running
+    /// shell selected. Thrown before the current solution is closed. The
+    /// caller must close this shell and start a new one.
+    /// </summary>
+    public sealed class ShellRestartRequiredException : InvalidOperationException
+    {
+        public string CurrentVersion { get; }
+        public string RequiredVersion { get; }
+
+        public ShellRestartRequiredException(string currentVersion, string requiredVersion)
+            : base($"The shell runs TwinCAT XAE {currentVersion} and this solution needs {requiredVersion}. " +
+                   "A version cannot be changed in a running shell.")
+        {
+            CurrentVersion = currentVersion;
+            RequiredVersion = requiredVersion;
         }
     }
 }
