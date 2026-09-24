@@ -31,7 +31,16 @@ namespace TcAutomation.Core
         private EnvDTE.Solution? _solution;
         private EnvDTE.Project? _tcProject;
         private bool _loaded;
+
+        // The shell this instance started. The Process object keeps the handle
+        // CreateProcess returned, so HasExited, StartTime and Kill act on that
+        // process and never on whatever later reuses its PID. Nothing else is
+        // ever terminated: an IDE the user opens is not ours, whenever it starts.
         private Process? _ownedProcess;
+        private readonly object _ownedProcessLock = new object();
+        // Set by Retire(). Checked under _ownedProcessLock before Process.Start,
+        // so a shutdown that retires this instance cannot race a launch.
+        private bool _launchClosed;
 
         // Silent-reload state. When we change DTE options (AutoloadExternalChanges,
         // etc.) we remember the previous value so we can restore it on Close()
@@ -55,11 +64,33 @@ namespace TcAutomation.Core
 
         /// <summary>
         /// The Windows PID of the TcXaeShell/devenv process we launched.
-        /// Populated directly from Process.Start before attaching to that PID in the ROT.
-        /// Used by the persistent host to write session files and force-kill on
-        /// shutdown even if DTE.Quit() fails or the DTE proxy becomes unresponsive.
+        /// Taken from Process.Start, before attaching to that exact PID in the
+        /// Running Object Table. Used by the persistent host to write session
+        /// files. Termination goes through <see cref="KillOwnedProcess"/>,
+        /// never through this number.
         /// </summary>
         public int? DteProcessId { get; private set; }
+
+        /// <summary>
+        /// Start-time fingerprint of the owned shell, in the round-trip format
+        /// SessionFile compares against. Read from the launch handle, so it
+        /// cannot describe a different process that reused the PID.
+        /// </summary>
+        public string? DteProcessStartTimeUtc { get; private set; }
+
+        /// <summary>
+        /// Called once the owned shell exists, before the up-to-two-minute wait
+        /// for its DTE. Lets the host record the PID while startup can still
+        /// fail or the worker can still be killed.
+        /// </summary>
+        public Action<VisualStudioInstance>? OwnedProcessStarted { get; set; }
+
+        /// <summary>
+        /// True once a termination attempt could not confirm that the owned
+        /// shell exited. The host must then keep its session record, so the
+        /// janitor can still find the shell by PID and fingerprint.
+        /// </summary>
+        public bool OwnedProcessLeftRunning { get; private set; }
 
         /// <summary>
         /// True once a solution is successfully opened and a TwinCAT project is found.
@@ -339,7 +370,8 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Close Visual Studio instance. Force-kills the process if DTE.Quit() fails.
+        /// Close Visual Studio instance. Terminates the owned shell through its
+        /// launch handle if DTE.Quit() leaves it running.
         /// </summary>
         public void Close()
         {
@@ -356,41 +388,98 @@ namespace TcAutomation.Core
                 _dialogWatchdogPid = null;
             }
 
-            if (_dte != null)
+            try
             {
-                // Restore any user preferences we tweaked at startup BEFORE
-                // Quit, because Quit may persist the current (our-modified)
-                // values to the registry profile.
-                RestoreDteOptions();
-
-                Thread.Sleep(3000); // Avoid busy errors
-                try
+                if (_dte != null)
                 {
-                    _dte.Quit();
-                    Thread.Sleep(5000);
-                }
-                catch { }
+                    // Restore any user preferences we tweaked at startup BEFORE
+                    // Quit, because Quit may persist the current (our-modified)
+                    // values to the registry profile.
+                    RestoreDteOptions();
 
-            }
-            // A retained Process handle identifies only the process we launched,
-            // including when startup failed before a DTE became available.
-            if (_ownedProcess != null)
-            {
-                try
-                {
-                    if (!_ownedProcess.HasExited)
+                    Thread.Sleep(3000); // Avoid busy errors
+                    try
                     {
-                        Console.Error.WriteLine($"[DEBUG] Force-killing owned DTE process (PID {_ownedProcess.Id})");
-                        _ownedProcess.Kill();
-                        _ownedProcess.WaitForExit(5000);
+                        _dte.Quit();
+                        Thread.Sleep(5000);
                     }
+                    catch { }
                 }
-                catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] Owned DTE cleanup failed: {ex.Message}"); }
-                finally { _ownedProcess.Dispose(); _ownedProcess = null; }
             }
-            _dte = null;
-            DteProcessId = null;
-            _loaded = false;
+            finally
+            {
+                // Runs whether or not a DTE was ever attached. Startup can fail
+                // after the shell started but before it published its DTE.
+                KillOwnedProcess("close");
+                _dte = null;
+                _solution = null;
+                _tcProject = null;
+                _loaded = false;
+            }
+        }
+
+        /// <summary>
+        /// Terminate the shell this instance started, through the launch
+        /// handle. Touches no other process. Safe from any thread and safe to
+        /// repeat.
+        ///
+        /// The whole attempt runs under one lock, so a second caller waits for
+        /// the first attempt's result instead of reading "nothing to do" while
+        /// the first is still terminating. Returns true once the shell is
+        /// confirmed gone, or when none was started. On false the handle is
+        /// KEPT, so a later call can retry, and the PID stays recorded.
+        /// </summary>
+        public bool KillOwnedProcess(string reason)
+        {
+            lock (_ownedProcessLock)
+            {
+                var owned = _ownedProcess;
+                if (owned == null) return true;
+
+                bool exited;
+                try
+                {
+                    if (!owned.HasExited)
+                    {
+                        Console.Error.WriteLine($"[DEBUG] Terminating owned DTE process (PID {owned.Id}, {reason})");
+                        owned.Kill();
+                    }
+                    exited = owned.WaitForExit(5000);
+                }
+                catch (Exception ex)
+                {
+                    // Kill throws when the process exited between the checks. The
+                    // handle answers that question without guessing.
+                    try { exited = owned.HasExited; } catch { exited = false; }
+                    if (!exited)
+                        Console.Error.WriteLine($"[DEBUG] Owned DTE cleanup failed: {ex.Message}");
+                }
+
+                if (!exited)
+                {
+                    Console.Error.WriteLine($"[DEBUG] Owned DTE process PID {owned.Id} is not confirmed gone");
+                    OwnedProcessLeftRunning = true;
+                    return false;
+                }
+
+                _ownedProcess = null;
+                owned.Dispose();
+                OwnedProcessLeftRunning = false;
+                DteProcessId = null;
+                DteProcessStartTimeUtc = null;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Refuse any further launch by this instance, then terminate its
+        /// shell. Used by shutdown, which can run while a launch is in
+        /// progress on the STA thread.
+        /// </summary>
+        public bool Retire(string reason)
+        {
+            lock (_ownedProcessLock) { _launchClosed = true; }
+            return KillOwnedProcess(reason);
         }
 
         public void Dispose()
@@ -424,17 +513,26 @@ namespace TcAutomation.Core
                     LaunchAndAttach(progId, command);
                     break;
                 }
+                catch (OperationCanceledException)
+                {
+                    // Shutdown retired this instance. Start nothing else.
+                    _dte = null;
+                    KillOwnedProcess("launch cancelled");
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     lastError = ex;
                     Console.Error.WriteLine($"[DEBUG] DTE launch {progId} failed: {ex}");
-                    bool started = DteProcessId != null;
-                    // No COM teardown under the launch gate. A claim that
-                    // failed leaves _dte set, and Quit() on it can block
-                    // behind a modal. Without a DTE, Close() only ends the
-                    // shell through its launch handle.
                     _dte = null;
-                    Close();
+                    bool started = DteProcessId != null;
+                    // A shell that will not die keeps its handle and its PID
+                    // record. Starting another would replace that record and
+                    // hide the first shell from the janitor.
+                    if (!KillOwnedProcess("launch failed"))
+                        throw new InvalidOperationException(
+                            $"XAE PID {DteProcessId?.ToString() ?? "unknown"} did not exit after a failed launch. " +
+                            "No other shell is started.", ex);
                     // Only a registration that cannot start at all moves on to
                     // the next ProgID. A shell that started and then died, never
                     // published its DTE, or lost its activation claim is a
@@ -533,10 +631,29 @@ namespace TcAutomation.Core
         private void LaunchAndAttach(string progId, string registeredCommand)
         {
             var start = CreateDevelopmentToolsStartInfo(registeredCommand);
-            var process = Process.Start(start) ?? throw new InvalidOperationException("XAE process did not start.");
-            _ownedProcess = process;
+            Process process;
+            lock (_ownedProcessLock)
+            {
+                // Under the same lock as Retire(). Once shutdown has retired
+                // this instance, no shell can start behind its back.
+                if (_launchClosed)
+                    throw new OperationCanceledException("The host is shutting down. No shell is started.");
+                if (_ownedProcess != null)
+                    throw new InvalidOperationException(
+                        $"This instance still owns XAE PID {_ownedProcess.Id}. No second shell is started.");
+                process = Process.Start(start)
+                    ?? throw new InvalidOperationException("XAE process did not start.");
+                _ownedProcess = process;
+                OwnedProcessLeftRunning = false;
+            }
             DteProcessId = process.Id;
+            try { DteProcessStartTimeUtc = process.StartTime.ToUniversalTime().ToString("O"); }
+            catch { DteProcessStartTimeUtc = null; }
             Console.Error.WriteLine($"[DEBUG] Launched owned DTE process PID: {DteProcessId}");
+
+            try { OwnedProcessStarted?.Invoke(this); }
+            catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] OwnedProcessStarted handler failed: {ex.Message}"); }
+
             var timer = Stopwatch.StartNew();
             while (timer.Elapsed < TimeSpan.FromSeconds(120))
             {
