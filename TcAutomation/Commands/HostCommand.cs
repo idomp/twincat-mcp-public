@@ -248,9 +248,8 @@ namespace TcAutomation.Commands
             bool hasParams = paramsEl.ValueKind == JsonValueKind.Object;
             string? solutionPath = StepDispatcher.GetString(paramsEl, "solutionPath", hasParams);
             string? tcVersionOverride = StepDispatcher.GetString(paramsEl, "tcVersion", hasParams);
-            // The same rule VisualStudioInstance applies: a blank override is
-            // absent. Otherwise the shell selects the project version while
-            // this host records the blank as the loaded version.
+            // A blank override is absent, as in VisualStudioInstance. Otherwise
+            // the shell loads the project version but the host records the blank.
             if (string.IsNullOrWhiteSpace(tcVersionOverride)) tcVersionOverride = null;
 
             if (string.IsNullOrWhiteSpace(solutionPath))
@@ -333,12 +332,11 @@ namespace TcAutomation.Commands
 
         // ================ Shell lifecycle ================
         //
-        // Every shell this worker started stays in _ownedShells until its exit
-        // is confirmed. The session record names one DTE PID, so no new shell
-        // starts while an earlier one is unconfirmed: the new record would
-        // replace the old one and hide a live shell from the janitor.
-        // Shutdown sets _launchesClosed first, then retires every listed
-        // shell, under the same lock that admits new launches.
+        // A started shell stays in _ownedShells until its exit is confirmed.
+        // The record names one DTE PID, so no shell starts while an earlier
+        // one is unconfirmed: the new record would hide it from the janitor.
+        // Shutdown sets _launchesClosed under the lock that admits launches,
+        // then retires every listed shell.
 
         private static readonly object LifecycleLock = new object();
         private static readonly System.Collections.Generic.List<VisualStudioInstance> _ownedShells =
@@ -356,8 +354,8 @@ namespace TcAutomation.Commands
         }
 
         /// <summary>
-        /// Terminate a shell and forget it only once its exit is confirmed.
-        /// Returns false while it may still be running; it then stays listed.
+        /// Kill a shell and unlist it once its exit is confirmed. False means
+        /// it may still run, and it stays listed.
         /// </summary>
         private static bool ReleaseShell(VisualStudioInstance vs, string reason, bool retire)
         {
@@ -375,9 +373,8 @@ namespace TcAutomation.Commands
         }
 
         /// <summary>
-        /// Close the active shell and drop it. Close() also releases the
-        /// dialog watchdog. Throws when the exit cannot be confirmed, and then
-        /// leaves the session record naming the shell.
+        /// Close and drop the active shell (Close() also releases the dialog
+        /// watchdog). Throws if the exit is unconfirmed, keeping the record.
         /// </summary>
         private static void DiscardShell(VisualStudioInstance vs, string reason)
         {
@@ -392,9 +389,9 @@ namespace TcAutomation.Commands
         }
 
         /// <summary>
-        /// Start a shell, select its version and open the solution. On any
-        /// failure, including a failed solution load, the shell is terminated
-        /// and no instance remains, so the next request starts clean.
+        /// Start a shell, select its version and open the solution. Any failure,
+        /// including the solution load, discards the shell. If its exit is
+        /// unconfirmed, it stays listed and blocks the next launch.
         /// </summary>
         private static void OpenFreshShell(string solutionPath, string projectTcVersion, string? tcVersionOverride,
             string effectiveTcVersion)
@@ -413,9 +410,8 @@ namespace TcAutomation.Commands
             var openSw = Stopwatch.StartNew();
             var vs = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersionOverride)
             {
-                // Record the shell the moment it exists. Startup takes up to
-                // two minutes, and a worker killed in that window must not
-                // leave a shell the janitor has no record of.
+                // Record the shell at once. The DTE wait alone takes up to 2 min,
+                // and a worker killed meanwhile must not leave an unrecorded shell.
                 OwnedProcessStarted = started => UpdateSessionFileWithDte(started, solutionPath, effectiveTcVersion)
             };
             AdmitShell(vs);
@@ -428,9 +424,8 @@ namespace TcAutomation.Commands
             }
             catch
             {
-                // DiscardShell throws only when the shell cannot be confirmed
-                // gone, and then keeps its record. The startup error matters
-                // more, so it is the one reported.
+                // Report the startup error. DiscardShell throws only for an
+                // unconfirmed exit, and then keeps the record.
                 try { DiscardShell(vs, "startup failed"); }
                 catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] host: {ex.Message}"); }
                 throw;
@@ -544,9 +539,9 @@ namespace TcAutomation.Commands
         // ================ Session file helpers ================
 
         /// <summary>
-        /// Record the owned shell, or clear the record when vs is null. The PID
-        /// and fingerprint both come from the launch handle. Reopening the PID
-        /// here would fingerprint whatever process holds that number now.
+        /// Record the owned shell, or clear the record when vs is null. PID and
+        /// fingerprint come from the launch handle: reopening the PID here can
+        /// fingerprint a newer process.
         /// </summary>
         private static void UpdateSessionFileWithDte(VisualStudioInstance? vs, string? solutionPath, string? tcVersion)
         {
@@ -575,13 +570,12 @@ namespace TcAutomation.Commands
 
             Console.Error.WriteLine($"[DEBUG] host: shutting down ({reason})");
 
-            // No shell starts after this point.
+            // Admit no new shell from here on.
             lock (LifecycleLock) { _launchesClosed = true; }
 
-            // The active shell gets a graceful Quit first. Close() terminates
-            // it through its launch handle if Quit leaves it running. No path
-            // reopens a PID: once a shell exits, that number can belong to
-            // anything.
+            // Close() tries Quit, then kills a survivor through the launch
+            // handle. Never by PID: once a shell exits, the number can belong
+            // to anything.
             var vs = _vsInstance;
             _vsInstance = null;
             try { vs?.Close(); } catch { }
@@ -594,8 +588,7 @@ namespace TcAutomation.Commands
                 _messageFilterRegistered = false;
             }
 
-            // Keep the record when the shell would not die. It is the only
-            // thing that lets the janitor find that shell again.
+            // Keep the record if a shell survived: the janitor needs it to find that shell.
             if (_sessionFile != null && !shellLeftRunning)
             {
                 try { SessionFile.Delete(_sessionFile.McpPid); } catch { }
@@ -696,18 +689,16 @@ namespace TcAutomation.Commands
             // session file if we didn't manage to.
             ShutdownCts.Cancel();
 
-            // Closed now, not after the grace period. The STA thread can be in
-            // the middle of a launch, and must not start a shell that nothing
-            // would then terminate.
+            // Close launches now, not after the grace period: a launch in progress
+            // on the STA thread must not start a shell nothing would terminate.
             lock (LifecycleLock) { _launchesClosed = true; }
 
             // Short grace period for main loop to tear down cleanly.
             Task.Delay(3000).ContinueWith(_ =>
             {
-                // Every shell this worker started, including one the STA
-                // thread is still closing or launching. Through the launch
-                // handle, never by PID. Retire also refuses a launch that has
-                // not reached Process.Start yet.
+                // Every shell this worker started, even one mid-close or
+                // mid-launch, through its launch handle, never by PID. Retire
+                // also blocks a launch not yet at Process.Start.
                 bool shellLeftRunning = !RetireAllShells("parent died");
 
                 if (_sessionFile != null && !shellLeftRunning)

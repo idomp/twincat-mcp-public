@@ -27,8 +27,8 @@ namespace TcAutomation.Core
         private string _tcVersion;
         private string? _forceTcVersion;
 
-        // The version the running shell selected at launch. It lives as long as
-        // the shell. Null means unknown: a reload must then start a new shell.
+        // The version the running shell selected at launch, kept for the
+        // shell's life. Null means unknown, and a reload then starts a new shell.
         private string? _shellTcVersion;
 
         private DTE2? _dte;
@@ -36,10 +36,9 @@ namespace TcAutomation.Core
         private EnvDTE.Project? _tcProject;
         private bool _loaded;
 
-        // The shell this instance started. The Process object keeps the handle
-        // CreateProcess returned, so HasExited, StartTime and Kill act on that
-        // process and never on whatever later reuses its PID. Nothing else is
-        // ever terminated: an IDE the user opens is not ours, whenever it starts.
+        // The shell this instance started. Process keeps the CreateProcess
+        // handle, so HasExited, StartTime and Kill never reach a process that
+        // reuses the PID. Nothing else is terminated, not even a user's IDE.
         private Process? _ownedProcess;
         private readonly object _ownedProcessLock = new object();
         // Set by Retire(). Checked under _ownedProcessLock before Process.Start,
@@ -68,31 +67,29 @@ namespace TcAutomation.Core
 
         /// <summary>
         /// The Windows PID of the TcXaeShell/devenv process we launched.
-        /// Taken from Process.Start, before attaching to that exact PID in the
-        /// Running Object Table. Used by the persistent host to write session
-        /// files. Termination goes through <see cref="KillOwnedProcess"/>,
-        /// never through this number.
+        /// From Process.Start, before the ROT attach to that exact PID. Used for
+        /// session files. Termination goes through <see cref="KillOwnedProcess"/>,
+        /// never this number.
         /// </summary>
         public int? DteProcessId { get; private set; }
 
         /// <summary>
-        /// Start-time fingerprint of the owned shell, in the round-trip format
-        /// SessionFile compares against. Read from the launch handle, so it
-        /// cannot describe a different process that reused the PID.
+        /// Start-time fingerprint ("O", as SessionFile compares), read from the
+        /// launch handle, so never that of a process reusing the PID.
         /// </summary>
         public string? DteProcessStartTimeUtc { get; private set; }
 
         /// <summary>
-        /// Called once the owned shell exists, before the up-to-two-minute wait
-        /// for its DTE. Lets the host record the PID while startup can still
-        /// fail or the worker can still be killed.
+        /// Called once the owned shell exists, before the up-to-2-min DTE wait,
+        /// so the host can record the PID while startup can still fail or the
+        /// worker still die.
         /// </summary>
         public Action<VisualStudioInstance>? OwnedProcessStarted { get; set; }
 
         /// <summary>
-        /// True once a termination attempt could not confirm that the owned
-        /// shell exited. The host must then keep its session record, so the
-        /// janitor can still find the shell by PID and fingerprint.
+        /// True when a kill could not confirm the shell exited. The host must
+        /// then keep its session record, so the janitor can find the shell by
+        /// PID and fingerprint.
         /// </summary>
         public bool OwnedProcessLeftRunning { get; private set; }
 
@@ -214,16 +211,11 @@ namespace TcAutomation.Core
             if (_dte == null)
                 throw new InvalidOperationException("DTE not loaded. Call Load() first.");
 
-            // Decide the version before closing anything. A requested version
-            // that is not installed is refused here, with the current solution
-            // still loaded. A different version cannot be selected in place:
-            // measured switching 3.1.4024.78 to .55, the remote manager throws
-            // E_INVALIDARG once a version is active. The caller must start a
-            // new shell for it.
-            //
-            // The comparison uses the version the shell selected at launch.
-            // An unknown version also means a new shell: selecting in place is
-            // exactly what fails.
+            // Check the version before closing anything, so a refusal leaves
+            // the solution loaded. A running shell cannot switch versions
+            // (measured 3.1.4024.78 to .55: E_INVALIDARG). A version other than
+            // the one the shell selected at launch needs a new shell, and so does
+            // any version when the shell's own is unknown.
             var target = NormalizeOverride(newForceTcVersion) ?? newTcVersion;
             var manager = (ITcRemoteManager)_dte.GetObject("TcRemoteManager");
             RequireInstalled(target, InstalledVersions(manager));
@@ -262,8 +254,7 @@ namespace TcAutomation.Core
             _tcVersion = newTcVersion;
             _forceTcVersion = NormalizeOverride(newForceTcVersion);
 
-            // Same version as the running shell, checked above. This reads it
-            // back and records it again.
+            // Same version as the running shell (checked above). Reads it back.
             LoadTwinCATVersion();
 
             LoadSolution();
@@ -392,14 +383,11 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Upper bound on COM teardown in Close(). RestoreDteOptions and Quit
-        /// can block behind a modal dialog indefinitely (measured: a "changed
-        /// outside the environment" modal held Close() for over 90 s). When
-        /// the bound expires, the owned shell is terminated through its launch
-        /// handle, and the blocked call then fails instead of waiting. The
-        /// bound holds only when that kill succeeds. An unconfirmed kill
-        /// leaves the call blocked, and the session record is kept.
-        /// Normal teardown takes about 5.5 s.
+        /// Upper bound on COM teardown in Close(). A modal can block
+        /// RestoreDteOptions or Quit indefinitely (measured: a file-changed
+        /// modal, over 90 s). On expiry the shell is killed through its launch
+        /// handle and the blocked call fails. If that kill is unconfirmed, the
+        /// call stays blocked and the record is kept. Normal teardown: ~5.5 s.
         /// </summary>
         private const int TeardownTimeoutMs = 30000;
 
@@ -431,8 +419,7 @@ namespace TcAutomation.Core
 
                 try
                 {
-                    // A shell that already exited has nothing to restore or
-                    // quit, and every COM call on it would only fail.
+                    // An exited shell has nothing to restore or quit.
                     if (_dte != null && IsOwnedProcessRunning)
                     {
                         // Restore any user preferences we tweaked at startup BEFORE
@@ -441,24 +428,21 @@ namespace TcAutomation.Core
                         try { RestoreDteOptions(); } catch { }
                     }
 
-                    // Checked again. When a modal blocked the restore, the
-                    // timer has ended the shell by now, and the sleep and Quit
-                    // would only add to the teardown.
+                    // Checked again: if a modal blocked the restore, the timer
+                    // has killed the shell, and Sleep and Quit would only add delay.
                     if (_dte != null && IsOwnedProcessRunning)
                     {
                         Thread.Sleep(3000); // Avoid busy errors
                         try { _dte.Quit(); }
                         catch { }
-                        // Up to 5 s for the shell to exit on its own. It
-                        // usually does within a second or two, and a fixed
+                        // Up to 5 s to exit on its own (usually 1-2 s). A fixed
                         // sleep here outlasted the client's shutdown wait.
                         WaitForOwnedExit(5000);
                     }
                 }
                 finally
                 {
-                    // Runs whether or not a DTE was ever attached. Startup can fail
-                    // after the shell started but before it published its DTE.
+                    // Runs even with no DTE: startup can fail after the shell started.
                     KillOwnedProcess("close");
                     _dte = null;
                     _solution = null;
@@ -490,15 +474,11 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Terminate the shell this instance started, through the launch
-        /// handle. Touches no other process. Safe from any thread and safe to
-        /// repeat.
-        ///
-        /// The whole attempt runs under one lock, so a second caller waits for
-        /// the first attempt's result instead of reading "nothing to do" while
-        /// the first is still terminating. Returns true once the shell is
-        /// confirmed gone, or when none was started. On false the handle is
-        /// KEPT, so a later call can retry, and the PID stays recorded.
+        /// Kill the shell this instance started, through its launch handle.
+        /// Touches no other process. Thread-safe and repeatable: one lock covers
+        /// the attempt, so a concurrent caller waits for its result. True once
+        /// the shell is confirmed gone or none was started. On false the handle
+        /// is KEPT for a retry, and the PID stays recorded.
         /// </summary>
         public bool KillOwnedProcess(string reason)
         {
@@ -519,8 +499,7 @@ namespace TcAutomation.Core
                 }
                 catch (Exception ex)
                 {
-                    // Kill throws when the process exited between the checks. The
-                    // handle answers that question without guessing.
+                    // Kill throws if the process exited meanwhile. Ask the handle.
                     try { exited = owned.HasExited; } catch { exited = false; }
                     if (!exited)
                         Console.Error.WriteLine($"[DEBUG] Owned DTE cleanup failed: {ex.Message}");
@@ -543,9 +522,8 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Refuse any further launch by this instance, then terminate its
-        /// shell. Used by shutdown, which can run while a launch is in
-        /// progress on the STA thread.
+        /// Block further launches by this instance, then kill its shell. For
+        /// shutdown, which can run during a launch on the STA thread.
         /// </summary>
         public bool Retire(string reason)
         {
@@ -597,18 +575,15 @@ namespace TcAutomation.Core
                     Console.Error.WriteLine($"[DEBUG] DTE launch {progId} failed: {ex}");
                     _dte = null;
                     bool started = DteProcessId != null;
-                    // A shell that will not die keeps its handle and its PID
-                    // record. Starting another would replace that record and
-                    // hide the first shell from the janitor.
+                    // A shell that will not die keeps its handle and record.
+                    // Another launch would overwrite the record and hide it.
                     if (!KillOwnedProcess("launch failed"))
                         throw new InvalidOperationException(
                             $"XAE PID {DteProcessId?.ToString() ?? "unknown"} did not exit after a failed launch. " +
                             "No other shell is started.", ex);
-                    // Only a registration that cannot start at all moves on to
-                    // the next ProgID. A shell that started and then died, never
-                    // published its DTE, or lost its activation claim is a
-                    // failure to report, not a reason to start a different IDE
-                    // while the launch gate is held.
+                    // Only a ProgID that cannot start moves on to the next. A
+                    // shell that started and then failed is reported, not
+                    // replaced by a different IDE.
                     if (started)
                         throw new InvalidOperationException(
                             $"{progId} started but did not become usable: {ex.Message}", ex);
@@ -635,24 +610,20 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Serializes start, ROT attach and activation claim across every
-        /// worker in this logon session. Two workers starting at once could
-        /// otherwise each claim the other's registration, leaving one
-        /// registration open to a third client, and releasing the foreign
-        /// claim can shut down a shell its own worker has not attached yet.
+        /// Serializes start, ROT attach and activation claim across the logon
+        /// session. Otherwise two workers can claim each other's registration:
+        /// one stays open to a third client, and releasing the foreign claim
+        /// can shut down a shell its worker has not attached yet.
         /// </summary>
         private const string LaunchGateName = @"Local\twincat-mcp-xae-launch";
 
         /// <summary>
-        /// How long a worker waits for another worker's launch. A holder
-        /// keeps the gate for its start, its ROT attach (bounded at 120 s),
-        /// its claim, and after a failed start its teardown. The claim is not
-        /// bounded: it returns at once normally, but when another program took
-        /// the registration, COM starts a new shell for it first (20 to 35 s
-        /// measured). A waiter can then time out; it starts nothing and
-        /// reports that.
-        /// mcp-server/twincat_mcp/host.py sizes the client's ensure-solution
-        /// budget (ENSURE_SOLUTION_TIMEOUT_SEC) from this value.
+        /// How long a worker waits for another's launch. The holder keeps the
+        /// gate through start, ROT attach (120 s max), claim and, after a
+        /// failed start, teardown. The claim is unbounded: instant normally,
+        /// 20 to 35 s (measured) when another program took the registration
+        /// and COM starts a shell first. A waiter that times out starts nothing
+        /// and says so. host.py's ENSURE_SOLUTION_TIMEOUT_SEC is sized from this.
         /// </summary>
         private const int LaunchGateWaitSeconds = 150;
 
@@ -705,8 +676,7 @@ namespace TcAutomation.Core
             Process process;
             lock (_ownedProcessLock)
             {
-                // Under the same lock as Retire(). Once shutdown has retired
-                // this instance, no shell can start behind its back.
+                // Same lock as Retire(): once retired, this instance starts nothing.
                 if (_launchClosed)
                     throw new OperationCanceledException("The host is shutting down. No shell is started.");
                 if (_ownedProcess != null)
@@ -742,18 +712,15 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// A shell started with -Embedding registers its DTE class object for
-        /// exactly one activation (measured: the first CoCreateInstance from
-        /// another process received this shell, the second started a new
-        /// one). Left unclaimed, the next activation of the ProgID by ANY
-        /// process on the machine is served by this shell, and that client
-        /// can open solutions in it or quit it. Claim it here, once, right
-        /// after attaching. Measured: the claim returns this same shell, no
-        /// extra shell starts, and the shell survives the release.
-        ///
-        /// A claim that returns anything else means another program can hold
-        /// this shell, or can still take it. That is an ownership failure:
-        /// the caller terminates this shell and reports the launch failed.
+        /// A shell started with -Embedding serves exactly one activation of its
+        /// DTE class (measured: another process's first CoCreateInstance got
+        /// this shell, its second started a new one). Unclaimed, the next
+        /// activation by ANY process gets this shell, and that client can open
+        /// solutions in it or quit it. So claim it right after attaching.
+        /// Measured: the claim returns this shell, starts no other, and the
+        /// shell survives the release. Any other result means another program
+        /// can hold or take this shell: the caller kills it and reports the
+        /// launch failed.
         /// </summary>
         private void ClaimOwnActivation(string progId, int processId)
         {
@@ -774,15 +741,12 @@ namespace TcAutomation.Core
             }
             finally
             {
-                // The same object as _dte shares its runtime wrapper, so
-                // releasing it would release the attached DTE too.
-                //
-                // Another shell's object is only released, never quit or
-                // killed. If the claim found no pending registration, COM
-                // started a new shell for it, and that shell exits on its own
-                // once this, its only reference, is released (measured: 24 s,
-                // both at once and after 10 s idle). A shell another program
-                // started keeps that program's references and stays up.
+                // Our own claim shares _dte's runtime wrapper: never release it.
+                // Another shell's object is only released, never quit or killed.
+                // If the claim found no pending registration, COM started a
+                // shell for it, which exits once this, its only reference, goes
+                // (measured 24 s, released at once or after 10 s idle). One
+                // another program started keeps that program's references.
                 if (claimed != null && !own && Marshal.IsComObject(claimed))
                     Marshal.ReleaseComObject(claimed);
             }
@@ -811,10 +775,9 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// The LocalServer32 command registered for a ProgID. Checks the 64-bit
-        /// registry view, then the 32-bit one. This worker is x64, and
-        /// TcXaeShell 15.0 registers its DTE class only in the 32-bit view, so
-        /// reading the default view alone finds no shell at all.
+        /// A ProgID's LocalServer32 command, from the 64-bit registry view, then
+        /// the 32-bit one. TcXaeShell 15.0 registers only in the 32-bit view,
+        /// which this x64 worker does not read by default.
         /// </summary>
         private static string? FindLocalServerCommand(string progId)
         {
@@ -1253,9 +1216,9 @@ namespace TcAutomation.Core
     }
 
     /// <summary>
-    /// A reload needs a TwinCAT XAE version other than the one the running
-    /// shell selected. Thrown before the current solution is closed. The
-    /// caller must close this shell and start a new one.
+    /// A reload needs a TwinCAT XAE version other than the running shell's.
+    /// Thrown before the solution closes. The caller must close this shell
+    /// and start a new one.
     /// </summary>
     public sealed class ShellRestartRequiredException : InvalidOperationException
     {
