@@ -416,12 +416,9 @@ namespace TcAutomation.Core
             {
                 try
                 {
-                    var type = Type.GetTypeFromProgID(progId);
-                    if (type == null) continue;
-                    using var key = Registry.ClassesRoot.OpenSubKey($@"CLSID\{{{type.GUID}}}\LocalServer32");
-                    var command = key?.GetValue(null) as string;
-                    if (string.IsNullOrWhiteSpace(command)) continue;
-                    var start = CreateDevelopmentToolsStartInfo(command!);
+                    var command = FindLocalServerCommand(progId);
+                    if (command == null) continue;
+                    var start = CreateDevelopmentToolsStartInfo(command);
                     _ownedProcess = Process.Start(start) ?? throw new InvalidOperationException("XAE process did not start.");
                     DteProcessId = _ownedProcess.Id;
                     Console.Error.WriteLine($"[DEBUG] Launched owned DTE process PID: {DteProcessId}");
@@ -447,6 +444,35 @@ namespace TcAutomation.Core
                 }
             }
             throw new InvalidOperationException("Could not load TcXaeShell or Visual Studio DTE. Ensure TwinCAT XAE is installed.", lastError);
+        }
+
+        /// <summary>
+        /// The LocalServer32 command registered for a ProgID. Checks the 64-bit
+        /// registry view, then the 32-bit one. This worker is x64, and
+        /// TcXaeShell 15.0 registers its DTE class only in the 32-bit view, so
+        /// reading the default view alone finds no shell at all.
+        /// </summary>
+        private static string? FindLocalServerCommand(string progId)
+        {
+            Type? type;
+            try { type = Type.GetTypeFromProgID(progId); }
+            catch { return null; }
+            if (type == null) return null;
+
+            foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+            {
+                try
+                {
+                    using (var root = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, view))
+                    using (var key = root.OpenSubKey($@"CLSID\{{{type.GUID}}}\LocalServer32"))
+                    {
+                        var command = key?.GetValue(null) as string;
+                        if (!string.IsNullOrWhiteSpace(command)) return command;
+                    }
+                }
+                catch { }
+            }
+            return null;
         }
 
         private static ProcessStartInfo CreateDevelopmentToolsStartInfo(string registeredCommand)
