@@ -412,38 +412,214 @@ namespace TcAutomation.Core
                 "VisualStudio.DTE.17.0",
             };
             Exception? lastError = null;
+            // One gate wait for the whole loop. A wait per ProgID would add up
+            // past the client's ensure-solution budget.
+            using (AcquireLaunchGate())
             foreach (var progId in progIds.Distinct())
             {
+                var command = FindLocalServerCommand(progId);
+                if (command == null) continue;
                 try
                 {
-                    var command = FindLocalServerCommand(progId);
-                    if (command == null) continue;
-                    var start = CreateDevelopmentToolsStartInfo(command);
-                    _ownedProcess = Process.Start(start) ?? throw new InvalidOperationException("XAE process did not start.");
-                    DteProcessId = _ownedProcess.Id;
-                    Console.Error.WriteLine($"[DEBUG] Launched owned DTE process PID: {DteProcessId}");
-                    var timer = Stopwatch.StartNew();
-                    while (timer.Elapsed < TimeSpan.FromSeconds(120))
-                    {
-                        if (_ownedProcess.HasExited)
-                            throw new InvalidOperationException($"XAE exited before publishing DTE (exit {_ownedProcess.ExitCode}).");
-                        _dte = FindOwnedDte(progId, DteProcessId.Value);
-                        if (_dte != null) break;
-                        Thread.Sleep(250);
-                    }
-                    if (_dte == null) throw new TimeoutException($"XAE PID {DteProcessId} did not publish its DTE within 120 seconds.");
-                    ConfigureDte();
-                    LoadTwinCATVersion();
-                    return;
+                    LaunchAndAttach(progId, command);
+                    break;
                 }
                 catch (Exception ex)
                 {
                     lastError = ex;
                     Console.Error.WriteLine($"[DEBUG] DTE launch {progId} failed: {ex}");
+                    bool started = DteProcessId != null;
+                    // No COM teardown under the launch gate. A claim that
+                    // failed leaves _dte set, and Quit() on it can block
+                    // behind a modal. Without a DTE, Close() only ends the
+                    // shell through its launch handle.
+                    _dte = null;
                     Close();
+                    // Only a registration that cannot start at all moves on to
+                    // the next ProgID. A shell that started and then died, never
+                    // published its DTE, or lost its activation claim is a
+                    // failure to report, not a reason to start a different IDE
+                    // while the launch gate is held.
+                    if (started)
+                        throw new InvalidOperationException(
+                            $"{progId} started but did not become usable: {ex.Message}", ex);
                 }
             }
-            throw new InvalidOperationException("Could not load TcXaeShell or Visual Studio DTE. Ensure TwinCAT XAE is installed.", lastError);
+
+            if (_dte == null)
+                throw new InvalidOperationException(
+                    "Could not load TcXaeShell or Visual Studio DTE. Ensure TwinCAT XAE is installed." +
+                    (lastError != null ? " Last error: " + lastError.Message : ""), lastError);
+
+            // Outside the ProgID loop and the launch gate. A version the shell
+            // cannot provide is a refusal, not a reason to start a different IDE.
+            try
+            {
+                ConfigureDte();
+                LoadTwinCATVersion();
+            }
+            catch
+            {
+                Close();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Serializes start, ROT attach and activation claim across every
+        /// worker in this logon session. Two workers starting at once could
+        /// otherwise each claim the other's registration, leaving one
+        /// registration open to a third client, and releasing the foreign
+        /// claim can shut down a shell its own worker has not attached yet.
+        /// </summary>
+        private const string LaunchGateName = @"Local\twincat-mcp-xae-launch";
+
+        /// <summary>
+        /// How long a worker waits for another worker's launch. A holder
+        /// keeps the gate for its start, its ROT attach (bounded at 120 s),
+        /// its claim, and after a failed start its teardown. The claim is not
+        /// bounded: it returns at once normally, but when another program took
+        /// the registration, COM starts a new shell for it first (20 to 35 s
+        /// measured). A waiter can then time out; it starts nothing and
+        /// reports that.
+        /// mcp-server/twincat_mcp/host.py sizes the client's ensure-solution
+        /// budget (ENSURE_SOLUTION_TIMEOUT_SEC) from this value.
+        /// </summary>
+        private const int LaunchGateWaitSeconds = 150;
+
+        private static IDisposable AcquireLaunchGate()
+        {
+            Mutex gate;
+            try
+            {
+                gate = new Mutex(false, LaunchGateName);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException || ex is WaitHandleCannotBeOpenedException)
+            {
+                // Typically a worker at another integrity level holds it. Say
+                // so, instead of letting it read as a missing installation.
+                throw new InvalidOperationException(
+                    $"The shell launch gate '{LaunchGateName}' cannot be opened ({ex.Message}). " +
+                    "Another worker, possibly elevated, is starting a shell. No shell is started.", ex);
+            }
+
+            bool held;
+            try { held = gate.WaitOne(TimeSpan.FromSeconds(LaunchGateWaitSeconds)); }
+            catch (AbandonedMutexException) { held = true; }   // the previous holder died
+            if (!held)
+            {
+                gate.Dispose();
+                throw new TimeoutException(
+                    $"Another worker's shell launch did not finish within {LaunchGateWaitSeconds} s. No shell is started.");
+            }
+            return new GateRelease(gate);
+        }
+
+        /// <summary>Releases the gate on the thread that acquired it.</summary>
+        private sealed class GateRelease : IDisposable
+        {
+            private Mutex? _gate;
+            public GateRelease(Mutex gate) { _gate = gate; }
+            public void Dispose()
+            {
+                var gate = _gate;
+                _gate = null;
+                if (gate == null) return;
+                try { gate.ReleaseMutex(); }
+                finally { gate.Dispose(); }
+            }
+        }
+
+        private void LaunchAndAttach(string progId, string registeredCommand)
+        {
+            var start = CreateDevelopmentToolsStartInfo(registeredCommand);
+            var process = Process.Start(start) ?? throw new InvalidOperationException("XAE process did not start.");
+            _ownedProcess = process;
+            DteProcessId = process.Id;
+            Console.Error.WriteLine($"[DEBUG] Launched owned DTE process PID: {DteProcessId}");
+            var timer = Stopwatch.StartNew();
+            while (timer.Elapsed < TimeSpan.FromSeconds(120))
+            {
+                if (process.HasExited)
+                    throw new InvalidOperationException($"XAE exited before publishing DTE (exit {process.ExitCode}).");
+                _dte = FindOwnedDte(progId, process.Id);
+                if (_dte != null)
+                {
+                    ClaimOwnActivation(progId, process.Id);
+                    return;
+                }
+                Thread.Sleep(250);
+            }
+            throw new TimeoutException($"XAE PID {process.Id} did not publish its DTE within 120 seconds.");
+        }
+
+        /// <summary>
+        /// A shell started with -Embedding registers its DTE class object for
+        /// exactly one activation (measured: the first CoCreateInstance from
+        /// another process received this shell, the second started a new
+        /// one). Left unclaimed, the next activation of the ProgID by ANY
+        /// process on the machine is served by this shell, and that client
+        /// can open solutions in it or quit it. Claim it here, once, right
+        /// after attaching. Measured: the claim returns this same shell, no
+        /// extra shell starts, and the shell survives the release.
+        ///
+        /// A claim that returns anything else means another program can hold
+        /// this shell, or can still take it. That is an ownership failure:
+        /// the caller terminates this shell and reports the launch failed.
+        /// </summary>
+        private void ClaimOwnActivation(string progId, int processId)
+        {
+            object? claimed = null;
+            bool own = false;
+            try
+            {
+                var type = Type.GetTypeFromProgID(progId)
+                    ?? throw new InvalidOperationException($"{progId} is no longer registered.");
+                claimed = Activator.CreateInstance(type);
+                own = claimed != null && _dte != null && SameComIdentity(claimed, _dte);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Could not claim the {progId} activation registered by PID {processId}: {ex.Message}. " +
+                    "Another program could attach to this shell, so it is not used.", ex);
+            }
+            finally
+            {
+                // The same object as _dte shares its runtime wrapper, so
+                // releasing it would release the attached DTE too.
+                //
+                // Another shell's object is only released, never quit or
+                // killed. If the claim found no pending registration, COM
+                // started a new shell for it, and that shell exits on its own
+                // once this, its only reference, is released (measured: 24 s,
+                // both at once and after 10 s idle). A shell another program
+                // started keeps that program's references and stays up.
+                if (claimed != null && !own && Marshal.IsComObject(claimed))
+                    Marshal.ReleaseComObject(claimed);
+            }
+            if (!own)
+                throw new InvalidOperationException(
+                    $"The {progId} activation claim for PID {processId} was served by another shell. " +
+                    "Another program could hold this shell's registration, so it is not used.");
+            Console.Error.WriteLine($"[DEBUG] Claimed the activation registered by owned PID {processId}");
+        }
+
+        private static bool SameComIdentity(object a, object b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            IntPtr pa = IntPtr.Zero, pb = IntPtr.Zero;
+            try
+            {
+                pa = Marshal.GetIUnknownForObject(a);
+                pb = Marshal.GetIUnknownForObject(b);
+                return pa == pb;
+            }
+            finally
+            {
+                if (pa != IntPtr.Zero) Marshal.Release(pa);
+                if (pb != IntPtr.Zero) Marshal.Release(pb);
+            }
         }
 
         /// <summary>

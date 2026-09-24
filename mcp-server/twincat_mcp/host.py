@@ -113,6 +113,16 @@ class ShellHost:
       - On a hard crash, the host's own parent-death watchdog takes over.
     """
 
+    # Time to wait for ensure-solution. A launch can wait up to 150 s for
+    # another worker's launch (LaunchGateWaitSeconds in
+    # VisualStudioInstance.cs) and up to 120 s for its ROT attach. The
+    # activation claim and Solution.Open have no bound of their own. The
+    # claim took up to 35 s when measured, and the project search after
+    # Solution.Open gives up after 30 s. This is a budget, not a guaranteed
+    # maximum. A shorter wait reports a lost response for a request the host
+    # still completes.
+    ENSURE_SOLUTION_TIMEOUT_SEC = 400.0
+
     # Time to wait for the "ready" handshake line on startup.
     READY_TIMEOUT_SEC = 30.0
 
@@ -143,7 +153,10 @@ class ShellHost:
         return self._call_raw("status", None, timeout=10)
 
     def ensure_solution(
-        self, solution_path: str, tc_version: str | None, timeout: float = 120.0
+        self,
+        solution_path: str,
+        tc_version: str | None,
+        timeout: float = ENSURE_SOLUTION_TIMEOUT_SEC,
     ) -> dict:
         """
         Ensure the host has the given solution loaded. Lazily starts the
@@ -232,7 +245,7 @@ class ShellHost:
             if command in shell_commands:
                 if not solution_path:
                     raise HostError(f"{command} requires a solution path")
-                self.ensure_solution(solution_path, tc_version, timeout=120.0)
+                self.ensure_solution(solution_path, tc_version)
 
             with self._lock:
                 if not self.is_alive():
