@@ -1325,9 +1325,9 @@ def get_tool_schemas() -> list[Tool]:
             description=(
                 "Read multiple PLC variables in a single batch call via ADS. "
                 "Much more efficient than calling twincat_read_var multiple times. "
-                "Returns a dictionary of symbol paths to their values, types, and sizes. "
-                "Symbols that fail to read will have individual error messages without "
-                "affecting other symbols in the batch."
+                "Returns an ordered list of per-symbol results (value, type, size) plus "
+                "success/error counts. Symbols that fail to read get individual error "
+                "messages without affecting other symbols in the batch."
             ),
             inputSchema={
                 "type": "object",
@@ -1362,7 +1362,8 @@ def get_tool_schemas() -> list[Tool]:
             description=(
                 "Write multiple PLC variables in a single batch call via ADS. "
                 "Much more efficient than calling twincat_write_var multiple times. "
-                "Accepts a dictionary of symbol paths to string values coerced to each symbol's PLC type. "
+                "Accepts a dictionary of symbol paths to values (string, number, or "
+                "boolean), each coerced to its symbol's PLC type. "
                 "Returns previous and new values for each symbol. "
                 "DANGEROUS: Requires armed mode. Writes are sequential — if one fails, "
                 "previous writes in the batch are NOT rolled back."
@@ -1376,8 +1377,8 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "variables": {
                         "type": "object",
-                        "description": "Dictionary of symbol paths to values (e.g., {'GVL.x': '42', 'GVL.y': '3.14'}). Max 500 entries.",
-                        "additionalProperties": {"type": "string"}
+                        "description": "Dictionary of symbol paths to values (e.g., {'GVL.x': 42, 'GVL.y': '3.14', 'GVL.b': True}). Values may be string/number/boolean. Max 500 entries.",
+                        "additionalProperties": {"type": ["string", "number", "boolean"]}
                     },
                     "port": {
                         "type": "integer",

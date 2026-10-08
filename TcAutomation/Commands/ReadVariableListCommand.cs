@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text.Json;
 using TwinCAT.Ads;
 
@@ -45,7 +46,9 @@ namespace TcAutomation.Commands
                     }
 
                     var stateInfo = adsClient.ReadState();
-                    if (stateInfo.AdsState != AdsState.Run)
+                    // Reads are valid whenever the runtime is loaded (Run or Stop);
+                    // only Config (no project) cannot serve symbols.
+                    if (stateInfo.AdsState != AdsState.Run && stateInfo.AdsState != AdsState.Stop)
                     {
                         result.ErrorMessage = $"PLC is not running (state: {stateInfo.AdsState}). Cannot read variables.";
                         Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -54,7 +57,7 @@ namespace TcAutomation.Commands
 
                     foreach (var symbolName in symbols)
                     {
-                        var itemResult = new ReadVariableItemResult();
+                        var itemResult = new ReadVariableItemResult { Symbol = symbolName };
                         uint handle = 0;
                         bool handleCreated = false;
 
@@ -68,7 +71,9 @@ namespace TcAutomation.Commands
                             handleCreated = true;
 
                             object value = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
-                            itemResult.Value = value?.ToString() ?? "null";
+                            itemResult.Value = value != null
+                                ? Convert.ToString(value, CultureInfo.InvariantCulture)
+                                : "null";
                             itemResult.RawValue = value;
                             itemResult.Success = true;
                         }
@@ -85,18 +90,29 @@ namespace TcAutomation.Commands
                         finally
                         {
                             if (handleCreated)
-                                adsClient.DeleteVariableHandle(handle);
+                            {
+                                // A failed handle release must not abort the whole batch.
+                                try { adsClient.DeleteVariableHandle(handle); } catch { /* best effort */ }
+                            }
                         }
 
-                        result.Results[symbolName] = itemResult;
+                        result.Items.Add(itemResult);
                     }
                 }
 
-                foreach (var item in result.Results.Values)
+                foreach (var item in result.Items)
                 {
                     if (item.Success) result.SuccessCount++;
                     else result.ErrorCount++;
                 }
+
+                // The batch ran (connected + iterated every symbol). Top-level
+                // Success reflects that, NOT whether every item succeeded — per
+                // -item failures are reported in Items, and a partial batch gets
+                // a Warning. (A hard failure above returns 1 with Success=false.)
+                result.Success = true;
+                if (result.ErrorCount > 0)
+                    result.Warning = $"{result.ErrorCount} of {result.SymbolCount} reads failed";
 
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
                 return 0;
@@ -154,15 +170,20 @@ namespace TcAutomation.Commands
     {
         public string AmsNetId { get; set; } = "";
         public int Port { get; set; }
+        public bool Success { get; set; }
         public int SymbolCount { get; set; }
         public int SuccessCount { get; set; }
         public int ErrorCount { get; set; }
-        public Dictionary<string, ReadVariableItemResult> Results { get; set; } = new Dictionary<string, ReadVariableItemResult>();
+        // Ordered list (not a dictionary) so duplicate symbol names and request
+        // order are preserved in the response.
+        public List<ReadVariableItemResult> Items { get; set; } = new List<ReadVariableItemResult>();
+        public string? Warning { get; set; }
         public string? ErrorMessage { get; set; }
     }
 
     public class ReadVariableItemResult
     {
+        public string Symbol { get; set; } = "";
         public bool Success { get; set; }
         public string Value { get; set; } = "";
         public object? RawValue { get; set; }

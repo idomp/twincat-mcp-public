@@ -322,28 +322,42 @@ async def handle_write_var(arguments: dict, tool_start_time: float) -> list[Text
 @register("twincat_read_var_list")
 async def handle_read_var_list(arguments: dict, tool_start_time: float) -> list[TextContent]:
     ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
-    symbols: list = arguments.get("symbols", [])
+    symbols = arguments.get("symbols", [])
     port = arguments.get("port", 851)
 
-    # StepDispatcher expects a comma-separated string for the symbols arg
+    # Send symbols as a JSON array (preserves commas in array indices, order,
+    # and duplicates); the dispatcher accepts an array directly. A string is
+    # passed through unchanged (the dispatcher also accepts a JSON-array string
+    # or a comma-separated string) — never iterate it into characters.
+    step_symbols = symbols if isinstance(symbols, str) else [str(s) for s in symbols]
     result, _ = run_shell_step(
         "read-var-list", {
             "amsNetId": ams_net_id,
-            "symbols": ",".join(str(s) for s in symbols),
+            "symbols": step_symbols,
             "port": port,
         },
         timeout_minutes=1,
     )
 
     if result.get("Success"):
-        readings = result.get("Results", {})
-        output = f"✅ Batch Read: {len(readings)} variables on {ams_net_id}:{port}\n\n"
-        for sym, data in readings.items():
-            if isinstance(data, dict) and data.get("Success"):
+        items = result.get("Items", [])
+        ok = result.get("SuccessCount", 0)
+        errs = result.get("ErrorCount", 0)
+        total = result.get("SymbolCount", len(items))
+        output = f"✅ Batch Read on {ams_net_id}:{port} — {ok}/{total} ok"
+        if errs:
+            output += f", {errs} failed"
+        output += "\n\n"
+        for data in items:
+            if not isinstance(data, dict):
+                continue
+            sym = data.get("Symbol", "?")
+            if data.get("Success"):
                 output += f"  `{sym}` = **{data.get('Value')}** ({data.get('DataType', '?')})\n"
             else:
-                err = data.get("ErrorMessage", "failed") if isinstance(data, dict) else "failed"
-                output += f"  `{sym}` ❌ {err}\n"
+                output += f"  `{sym}` ❌ {data.get('ErrorMessage', 'failed')}\n"
+        if result.get("Warning"):
+            output += f"\n⚠️ {result.get('Warning')}"
     else:
         output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
 
@@ -367,14 +381,22 @@ async def handle_write_var_list(arguments: dict, tool_start_time: float) -> list
     )
 
     if result.get("Success"):
-        writes = result.get("Results", {})
-        output = f"✅ Batch Write: {len(writes)} variables on {ams_net_id}:{port}\n\n"
-        for sym, data in writes.items():
-            if isinstance(data, dict) and data.get("Success"):
+        items = result.get("Items", [])
+        ok = result.get("SuccessCount", 0)
+        errs = result.get("ErrorCount", 0)
+        total = result.get("SymbolCount", len(items))
+        output = f"✅ Batch Write on {ams_net_id}:{port} — {ok}/{total} ok"
+        if errs:
+            output += f", {errs} failed"
+        output += "\n\n"
+        for data in items:
+            if not isinstance(data, dict):
+                continue
+            sym = data.get("Symbol", "?")
+            if data.get("Success"):
                 output += f"  `{sym}`: {data.get('PreviousValue')} → **{data.get('NewValue')}**\n"
             else:
-                err = data.get("ErrorMessage", "failed") if isinstance(data, dict) else "failed"
-                output += f"  `{sym}` ❌ {err}\n"
+                output += f"  `{sym}` ❌ {data.get('ErrorMessage', 'failed')}\n"
         if result.get("Warning"):
             output += f"\n⚠️ {result.get('Warning')}"
     else:

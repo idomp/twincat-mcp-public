@@ -178,10 +178,27 @@ namespace TcAutomation.Commands
             {
                 client.WriteAny(handle, value, new int[] { size });
             }
+            else if (IsIntegerBacked(upperType, size))
+            {
+                // enums (E_*) and the duration/date types are integers on the wire: TIME/DATE/TOD in ms,
+                // LTIME in ns, an enum as its base integer. Written little-endian at the symbol's size.
+                long n = long.Parse(value, CultureInfo.InvariantCulture);
+                byte[] raw = BitConverter.GetBytes(n);
+                client.Write(handle, raw.AsMemory(0, size));
+            }
             else
             {
                 throw new ArgumentException($"Unsupported type for writing: {typeName}");
             }
+        }
+
+        private static readonly string[] IntegerBackedTypes = { "TIME", "LTIME", "DATE", "DT", "DATE_AND_TIME", "TOD", "TIME_OF_DAY", "LDATE", "LDT", "LTOD" };
+
+        /// <summary>An enum (house prefix E_) or a duration/date type: an integer of 1, 2, 4 or 8 bytes.</summary>
+        private static bool IsIntegerBacked(string upperType, int size)
+        {
+            if (size != 1 && size != 2 && size != 4 && size != 8) return false;
+            return upperType.StartsWith("E_") || Array.IndexOf(IntegerBackedTypes, upperType) >= 0;
         }
     }
 

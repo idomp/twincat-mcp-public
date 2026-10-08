@@ -445,7 +445,7 @@ namespace TcAutomation
                 getDefaultValue: () => 851);
             var readVarListSymbolsOpt = new Option<string>(
                 aliases: new[] { "--symbols" },
-                description: "Comma-separated list of symbol paths (max 500)");
+                description: "Symbol paths as a JSON array (e.g. [\"MAIN.a\",\"MAIN.arr[1,2]\"]) or a comma-separated list (max 500)");
             readVarListSymbolsOpt.IsRequired = true;
             readVarListCommand.AddOption(readVarListAmsOpt);
             readVarListCommand.AddOption(readVarListPortOpt);
@@ -453,7 +453,18 @@ namespace TcAutomation
 
             readVarListCommand.SetHandler((string amsNetId, int port, string symbols) =>
             {
-                var symbolArray = symbols.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                string[] symbolArray;
+                var trimmed = (symbols ?? "").TrimStart();
+                if (trimmed.StartsWith("["))
+                {
+                    try { symbolArray = JsonSerializer.Deserialize<string[]>(symbols) ?? Array.Empty<string>(); }
+                    catch { symbolArray = (symbols ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries); }
+                }
+                else
+                {
+                    symbolArray = (symbols ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    for (int i = 0; i < symbolArray.Length; i++) symbolArray[i] = symbolArray[i].Trim();
+                }
                 ReadVariableListCommand.Execute(amsNetId, port, symbolArray);
             }, readVarListAmsOpt, readVarListPortOpt, readVarListSymbolsOpt);
 
