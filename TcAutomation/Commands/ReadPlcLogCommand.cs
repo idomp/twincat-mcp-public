@@ -21,9 +21,8 @@ namespace TcAutomation.Commands
     /// Implementation note: uses the Beckhoff-provided
     /// `Beckhoff.TwinCAT.TcEventLoggerAdsProxy.Net` COM wrapper, which
     /// connects via ADS port 110 under the hood. Events fire on a
-    /// background COM thread; we marshal them through a simple lock and
-    /// a `ManualResetEventSlim` so the main thread can wait for the
-    /// window to expire cleanly.
+    /// background COM thread. Append updates the result under a lock;
+    /// the caller waits with Thread.Sleep, then closes the result.
     /// </summary>
     public static class ReadPlcLogCommand
     {
@@ -40,6 +39,7 @@ namespace TcAutomation.Commands
             TcEventLogger? logger = null;
             var lockObj = new object();
             int totalSeen = 0;  // every matching event, including those dropped past maxResults
+            bool closed = false;  // set under lockObj; later callbacks must not change the result
             int lcid = CultureInfo.CurrentCulture.LCID;
             string containsLower = (contains ?? "").ToLowerInvariant();
             bool hasFilter = containsLower.Length > 0;
@@ -55,6 +55,7 @@ namespace TcAutomation.Commands
 
                     lock (lockObj)
                     {
+                        if (closed) return;
                         totalSeen++;
                         if (result.Events.Count >= maxResults)
                         {
@@ -136,15 +137,20 @@ namespace TcAutomation.Commands
                 int totalMs = Math.Max(1, waitSeconds) * 1000;
                 Thread.Sleep(totalMs);
 
+                // Snapshot under the lock: callbacks can still arrive until Disconnect.
+                lock (lockObj)
+                {
+                    closed = true;
+                    // All matching events in the window; Events holds at most maxResults.
+                    result.TotalCaptured = totalSeen;
+                }
                 result.Success = true;
-                // True number of matching events during the window; Events may be
-                // fewer when Truncated (capped at maxResults).
-                result.TotalCaptured = totalSeen;
                 Emit(result);
                 return 0;
             }
             catch (Exception ex)
             {
+                lock (lockObj) closed = true;
                 result.ErrorMessage = $"Failed to read PLC log: {ex.Message}";
                 Emit(result);
                 return 1;
