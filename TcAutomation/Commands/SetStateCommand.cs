@@ -30,17 +30,11 @@ namespace TcAutomation.Commands
                     return 1;
                 }
 
-                // System-level state changes (Config/Run) must go to the TwinCAT
-                // System Service on port 10000, not the PLC runtime on 851.
-                //
-                // NOTE: Stop (and Reset) intentionally stay on the caller's port
-                // (typically 851), so they act on the PLC runtime only — not the
-                // whole TwinCAT system. This makes a Stop->Run round-trip
-                // asymmetric (Stop affects the runtime; Run affects the system
-                // service) by design: routing Stop to the system service would
-                // stop the entire TwinCAT system, which is more destructive than
-                // callers expect. Revisit here if symmetric system-level
-                // semantics are ever wanted.
+                // For port 851, Config and Run go to the System Service on port
+                // 10000. Every other request keeps the caller's port, so Stop on
+                // 851 stops the PLC runtime only. A Stop->Run round trip is
+                // therefore asymmetric, and Run may report success while the PLC
+                // stays stopped (not verified on a target).
                 int effectivePort = port;
                 if (port == 851 && (adsState == AdsState.Config || adsState == AdsState.Run))
                 {
