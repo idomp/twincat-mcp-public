@@ -382,7 +382,8 @@ namespace TcAutomation.Core
                 return true;
             }
 
-            var successProp = result.GetType().GetProperty("Success");
+            // Anonymous receipts use lowercase names.
+            var successProp = result.GetType().GetProperty("Success") ?? result.GetType().GetProperty("success");
             if (successProp != null && successProp.PropertyType == typeof(bool))
             {
                 return (bool)successProp.GetValue(result)!;
@@ -409,7 +410,7 @@ namespace TcAutomation.Core
                 return null;
             }
 
-            foreach (var name in new[] { "ErrorMessage", "Error" })
+            foreach (var name in new[] { "ErrorMessage", "Error", "errorMessage" })
             {
                 var prop = result.GetType().GetProperty(name);
                 if (prop != null && prop.PropertyType == typeof(string))

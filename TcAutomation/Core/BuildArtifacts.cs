@@ -39,19 +39,22 @@ namespace TcAutomation.Core
     public static class BuildArtifacts
     {
         const long MaxBytes = 64 * 1024 * 1024;
-        public static List<ArtifactRecord> Capture(VisualStudioInstance vs, string selectedPlc = null)
+        public static List<ArtifactRecord> Capture(VisualStudioInstance vs, string selectedPlc = null, ICollection<string> gaps = null) =>
+            Capture(vs.TwinCATProjectFilePath, selectedPlc, gaps);
+
+        // gaps receives independent PLC files that are missing or unreadable.
+        public static List<ArtifactRecord> Capture(string tcProject, string selectedPlc = null, ICollection<string> gaps = null)
         {
-            string tcProject = vs.TwinCATProjectFilePath;
-            var xml = Load(tcProject);
             var result = new List<ArtifactRecord>();
-            foreach (var node in xml.Descendants().Where(e => e.Name.LocalName == "Project" && e.Attribute("PrjFilePath") != null))
+            var missing = new List<string>();
+            foreach (var (node, baseDir) in PlcProjectNodes(tcProject, missing))
             {
                 string name = (string)node.Attribute("Name");
                 if (selectedPlc != null && !name.Equals(selectedPlc, StringComparison.OrdinalIgnoreCase)) continue;
-                string project = System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(tcProject), (string)node.Attribute("PrjFilePath")));
+                string project = System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, (string)node.Attribute("PrjFilePath")));
                 string tmc = (string)node.Attribute("TmcFilePath");
                 tmc = string.IsNullOrWhiteSpace(tmc) ? System.IO.Path.ChangeExtension(project, ".tmc")
-                    : System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(tcProject), tmc));
+                    : System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, tmc));
                 var record = Read(tmc);
                 record.PlcName = name;
                 record.ProjectPath = project;
@@ -59,8 +62,29 @@ namespace TcAutomation.Core
                 catch (Exception ex) { record.Error = "Source manifest unavailable: " + ex.Message; }
                 result.Add(record);
             }
-            if (selectedPlc != null && result.Count != 1) throw new ArgumentException("Selected PLC project was not found uniquely in the loaded TwinCAT project.");
+            string gap = missing.Count == 0 ? "" : " Missing or unreadable independent PLC project files: " + string.Join(", ", missing);
+            if (selectedPlc != null && result.Count != 1) throw new ArgumentException("Selected PLC project was not found uniquely in the loaded TwinCAT project." + gap);
+            foreach (var file in missing) gaps?.Add(file);
             return result;
+        }
+
+        // A PLC sits inline in the .tsproj, or in an independent project file
+        // (<Plc><Project File="X.xti"/>) under _Config\PLC, as in every sample checked. Its paths are relative to the .xti.
+        static IEnumerable<(XElement Node, string BaseDir)> PlcProjectNodes(string tcProject, List<string> missing)
+        {
+            string dir = System.IO.Path.GetDirectoryName(tcProject);
+            foreach (var node in Load(tcProject).Descendants().Where(e => e.Name.LocalName == "Project"))
+            {
+                if (node.Attribute("PrjFilePath") != null) { yield return (node, dir); continue; }
+                string file = (string)node.Attribute("File");
+                if (file == null || node.Parent?.Name.LocalName != "Plc") continue;
+                string xti = System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, "_Config", "PLC", file));
+                XDocument doc;
+                try { doc = Load(xti); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is XmlException) { missing.Add(xti); continue; }
+                foreach (var inner in doc.Descendants().Where(e => e.Name.LocalName == "Project" && e.Attribute("PrjFilePath") != null))
+                    yield return (inner, System.IO.Path.GetDirectoryName(xti));
+            }
         }
 
         public static ArtifactRecord Read(string file)
@@ -109,7 +133,13 @@ namespace TcAutomation.Core
         public static object Query(VisualStudioInstance vs, string plcName, string kind, string query, int offset, int limit)
         {
             if (offset < 0 || limit < 1 || limit > 200 || (kind != "symbols" && kind != "types")) throw new ArgumentException("Invalid symbol query.");
-            var current = Capture(vs, plcName).Single();
+            ArtifactRecord current;
+            try { current = Capture(vs, plcName).Single(); }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException || ex is IOException || ex is UnauthorizedAccessException || ex is InvalidDataException || ex is XmlException)
+            {
+                // Read-only query: a layout or file error is a failure, not an unknown outcome.
+                return new { success = false, errorMessage = ex.Message, kind };
+            }
             if (vs.LastBuildArtifacts.TryGetValue(plcName, out var previous))
             {
                 current.BuildId = previous.BuildId; current.CompilerSuccess = previous.CompilerSuccess;

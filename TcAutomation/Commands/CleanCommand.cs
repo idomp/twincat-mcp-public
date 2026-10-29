@@ -55,8 +55,10 @@ namespace TcAutomation.Commands
             try
             {
                 vsInstance.CleanSolution();
+                var gaps = new System.Collections.Generic.List<string>();
                 result.RetainedArtifacts = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(
-                    System.Linq.Enumerable.Where(BuildArtifacts.Capture(vsInstance), a => a.Exists), a => a.Path));
+                    System.Linq.Enumerable.Where(BuildArtifacts.Capture(vsInstance, null, gaps), a => a.Exists), a => a.Path));
+                result.MissingProjectFiles = gaps.ToArray();
                 result.Success = true;
                 deadline.Complete();
                 result.Message = "Solution clean completed. Retained TMC files are listed; their presence does not prove a current successful build.";
@@ -81,6 +83,8 @@ namespace TcAutomation.Commands
     {
         public bool OutcomeUnknown { get; set; }
         public string[] RetainedArtifacts { get; set; } = new string[0];
+        // Independent PLC files that could not be read; their TMC files are not listed.
+        public string[] MissingProjectFiles { get; set; } = new string[0];
         public bool Success { get; set; }
         public string Solution { get; set; } = "";
         public string? Message { get; set; }
