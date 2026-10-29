@@ -532,7 +532,7 @@ namespace TcAutomation
             }, cfgRtSolutionOpt, cfgRtMaxCpusOpt, cfgRtLoadLimitOpt, cfgRtTcVersionOpt);
 
             // === SET-STATE COMMAND (ADS) ===
-            var setStateCommand = new Command("set-state", "Set TwinCAT runtime state (Run, Stop, Config) via ADS (no VS required)");
+            var setStateCommand = new Command("set-state", "Set TwinCAT runtime state (Run, Stop, Config, Reset, Reconfig) via ADS (no VS required)");
             var setStateAmsOpt = CreateAmsNetIdOption(required: true);
             var setStatePortOpt = new Option<int>(
                 aliases: new[] { "--port", "-p" },
@@ -540,16 +540,19 @@ namespace TcAutomation
                 getDefaultValue: () => 851);
             var setStateTargetOpt = new Option<string>(
                 aliases: new[] { "--state", "-t" },
-                description: "Target state: Run, Stop, Config, or Reset");
+                description: "Target state: Run, Stop, Config, Reset, or Reconfig");
             setStateTargetOpt.IsRequired = true;
             setStateCommand.AddOption(setStateAmsOpt);
             setStateCommand.AddOption(setStatePortOpt);
             setStateCommand.AddOption(setStateTargetOpt);
             
-            setStateCommand.SetHandler((string amsNetId, int port, string state) =>
+            setStateCommand.SetHandler((System.CommandLine.Invocation.InvocationContext ctx) =>
             {
-                SetStateCommand.Execute(amsNetId, port, state);
-            }, setStateAmsOpt, setStatePortOpt, setStateTargetOpt);
+                ctx.ExitCode = SetStateCommand.Execute(
+                    ctx.ParseResult.GetValueForOption(setStateAmsOpt)!,
+                    ctx.ParseResult.GetValueForOption(setStatePortOpt),
+                    ctx.ParseResult.GetValueForOption(setStateTargetOpt)!);
+            });
 
             // === ADD NEW COMMANDS TO ROOT ===
             // NOTE: getStateCommand and pingTargetCommand are registered

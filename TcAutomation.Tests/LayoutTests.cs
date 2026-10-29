@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using TcAutomation.Commands;
 using TcAutomation.Core;
 
 static class LayoutTests
@@ -113,6 +114,19 @@ static class LayoutTests
             Check(TcFileUtilities.GetTcVersion(ver) == "3.1.4026.17", "An empty TcVersion is skipped");
             File.WriteAllText(ver, "<TcSmProject>");
             Check(TcFileUtilities.GetTcVersion(ver) == "", "No TcVersion gives an empty string");
+
+            // X05: Run on a PLC port with the system running must start that PLC, not the system.
+            Check(SetStateCommand.ChooseWritePort(851, TwinCAT.Ads.AdsState.Run, TwinCAT.Ads.AdsState.Run) == 851, "Run with system running goes to the PLC port");
+            Check(SetStateCommand.ChooseWritePort(852, TwinCAT.Ads.AdsState.Run, TwinCAT.Ads.AdsState.Run) == 852, "Second PLC port too");
+            Check(SetStateCommand.ChooseWritePort(851, TwinCAT.Ads.AdsState.Run, TwinCAT.Ads.AdsState.Config) == 10000, "Run with system in Config starts the system");
+            Check(SetStateCommand.ChooseWritePort(851, TwinCAT.Ads.AdsState.Config, null) == 10000, "Config is a system state");
+            Check(SetStateCommand.ChooseWritePort(851, TwinCAT.Ads.AdsState.Stop, TwinCAT.Ads.AdsState.Run) == 851, "Stop stays on the PLC port");
+            Check(SetStateCommand.ChooseWritePort(10000, TwinCAT.Ads.AdsState.Run, null) == 10000, "System port is used as given");
+            Check(SetStateCommand.ChooseWritePort(851, TwinCAT.Ads.AdsState.Reconfig, TwinCAT.Ads.AdsState.Run) == 10000, "Reconfig is a system state");
+            Check(SetStateCommand.CheckPort(851, TwinCAT.Ads.AdsState.Config) == 10000, "Config is verified on the system port");
+            Check(SetStateCommand.CheckPort(851, TwinCAT.Ads.AdsState.Reconfig) == 10000, "Reconfig is verified on the system port");
+            Check(SetStateCommand.CheckPort(851, TwinCAT.Ads.AdsState.Run) == 851, "Run is verified on the PLC port");
+            Check(SetStateCommand.CheckPort(500, TwinCAT.Ads.AdsState.Config) == 500, "A non-PLC port is verified as given");
 
             // Native batches decide stop-on-error from these helpers; anonymous receipts use lowercase names.
             Check(!StepDispatcher.IsResultSuccessful(new { success = false, errorMessage = "e" }), "Lowercase success:false is a failure");
