@@ -23,8 +23,8 @@ $testProj = Join-Path $repo 'TcAutomation.Tests\TcAutomation.Tests.csproj'
 if ($MsBuildPath -and -not (Test-Path -LiteralPath $MsBuildPath -PathType Leaf)) { throw "MsBuildPath not found: $MsBuildPath" }
 $msbuildCandidates = @(
     $MsBuildPath,
-    'C:\Program Files (x86)\Beckhoff\TcXaeShell\MSBuild\15.0\Bin\MSBuild.exe',
-    'C:\Program Files (x86)\Beckhoff\TcXaeShell\MSBuild\Current\Bin\MSBuild.exe'
+    "${env:ProgramFiles(x86)}\Beckhoff\TcXaeShell\MSBuild\15.0\Bin\MSBuild.exe",
+    "${env:ProgramFiles(x86)}\Beckhoff\TcXaeShell\MSBuild\Current\Bin\MSBuild.exe"
 ) | Where-Object { $_ }
 $msbuild = $msbuildCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 if (-not $msbuild) {
