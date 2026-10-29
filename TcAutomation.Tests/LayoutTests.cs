@@ -106,6 +106,14 @@ static class LayoutTests
             Check(pair.Count == 2 && pair.Select(a => a.PlcName).OrderBy(n => n).SequenceEqual(new[] { "PLC1", "PLC2" }), "Inline and independent PLCs found together");
             Check(pair.Single(a => a.PlcName == "PLC2").Path == Path.Combine(both, "PLC2", "PLC2.tmc"), "Missing TmcFilePath defaults next to the .plcproj");
 
+            string ver = Path.Combine(directory, "ver.tsproj");
+            File.WriteAllText(ver, "TcVersion=\"3.1.4024.12\" rest");
+            Check(TcFileUtilities.GetTcVersion(ver) == "3.1.4024.12", "TcVersion at line start is read");
+            File.WriteAllText(ver, "<TcSmProject TcVersion=\"\">\n<Project TcVersion=\"3.1.4026.17\">");
+            Check(TcFileUtilities.GetTcVersion(ver) == "3.1.4026.17", "An empty TcVersion is skipped");
+            File.WriteAllText(ver, "<TcSmProject>");
+            Check(TcFileUtilities.GetTcVersion(ver) == "", "No TcVersion gives an empty string");
+
             // Native batches decide stop-on-error from these helpers; anonymous receipts use lowercase names.
             Check(!StepDispatcher.IsResultSuccessful(new { success = false, errorMessage = "e" }), "Lowercase success:false is a failure");
             Check(StepDispatcher.ExtractErrorFromResult(new { success = false, errorMessage = "e" }) == "e", "Lowercase errorMessage is extracted");
