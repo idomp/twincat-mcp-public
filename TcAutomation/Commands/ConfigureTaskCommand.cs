@@ -66,6 +66,7 @@ namespace TcAutomation.Commands
                 TaskName = taskName
             };
 
+            bool written = false;
             try
             {
                 var automation = new AutomationInterface(vsInstance);
@@ -110,38 +111,64 @@ namespace TcAutomation.Commands
                 string currentXml = targetTask.ProduceXml();
 
                 bool wasDisabled = (targetTask.Disabled != DISABLED_STATE.SMDS_NOT_DISABLED);
-                bool wasAutoStart = GetAutoStartFromXml(currentXml);
+                bool? wasAutoStart = GetAutoStartFromXml(currentXml);
                 result.PreviousDisabled = wasDisabled;
                 result.PreviousAutoStart = wasAutoStart;
+                // Until read back, the observed state is the old one.
+                result.NewDisabled = wasDisabled;
+                result.NewAutoStart = wasAutoStart;
+
+                if (autoStart.HasValue && wasAutoStart == null)
+                {
+                    result.ErrorMessage = $"Task '{taskName}' has no TaskDef/AutoStart node; nothing changed.";
+                    return result;
+                }
 
                 bool newDisabled = enable.HasValue ? !enable.Value : wasDisabled;
-                bool newAutoStart = autoStart.HasValue ? autoStart.Value : wasAutoStart;
-
-                targetTask.Disabled = newDisabled ? DISABLED_STATE.SMDS_DISABLED : DISABLED_STATE.SMDS_NOT_DISABLED;
-
-                if (newAutoStart != wasAutoStart)
+                if (autoStart.HasValue && autoStart != wasAutoStart)
                 {
-                    string newXml = SetAutoStartInXml(currentXml, newAutoStart);
-                    if (!string.IsNullOrEmpty(newXml))
-                    {
-                        targetTask.ConsumeXml(newXml);
-                    }
+                    // Before Disabled: this XML also carries the old Disabled state.
+                    written = true;
+                    targetTask.ConsumeXml(SetAutoStartInXml(currentXml, autoStart.Value));
+                }
+
+                // Only when asked: writing it would also replace an inherited SMDS_PARENT_DISABLED.
+                if (enable.HasValue)
+                {
+                    written = true;
+                    targetTask.Disabled = newDisabled ? DISABLED_STATE.SMDS_DISABLED : DISABLED_STATE.SMDS_NOT_DISABLED;
                 }
 
                 System.Threading.Thread.Sleep(1000);
 
-                result.NewDisabled = newDisabled;
-                result.NewAutoStart = newAutoStart;
+                // Report what the project holds, not what was requested.
+                result.NewDisabled = targetTask.Disabled != DISABLED_STATE.SMDS_NOT_DISABLED;
+                result.NewAutoStart = GetAutoStartFromXml(targetTask.ProduceXml());
+                bool? newAutoStart = autoStart ?? wasAutoStart;
+                if (result.NewDisabled != newDisabled || (autoStart.HasValue && result.NewAutoStart != newAutoStart))
+                {
+                    result.ErrorMessage = $"Task '{taskName}' reads back Disabled={result.NewDisabled}, AutoStart={Show(result.NewAutoStart)}; " +
+                                          $"requested Disabled={newDisabled}, AutoStart={Show(newAutoStart)}.";
+                    return result;
+                }
                 result.Success = true;
-                result.Message = $"Task '{taskName}' configured: Disabled={newDisabled}, AutoStart={newAutoStart}";
+                result.Message = $"Task '{taskName}' configured: Disabled={newDisabled}, AutoStart={Show(newAutoStart)}";
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
+                if (written)
+                {
+                    // A write may have landed before the fault; the new state was not read back.
+                    result.OutcomeUnknown = true;
+                    result.NewAutoStart = null;
+                }
             }
 
             return result;
         }
+
+        private static string Show(bool? value) => value?.ToString() ?? "unknown";
 
         private static string GetItemNameFromXml(string xml)
         {
@@ -151,7 +178,8 @@ namespace TcAutomation.Commands
             return itemNameNode?.InnerText ?? "";
         }
 
-        private static bool GetAutoStartFromXml(string xml)
+        // Null when the node is absent: unknown, not false.
+        private static bool? GetAutoStartFromXml(string xml)
         {
             var xmlDoc = new XmlDocument();
             xmlDoc.LoadXml(xml);
@@ -161,7 +189,7 @@ namespace TcAutomation.Commands
             {
                 return autoStartNode.InnerText.Equals("true", StringComparison.OrdinalIgnoreCase);
             }
-            return false;
+            return null;
         }
 
         private static string SetAutoStartInXml(string xml, bool autoStart)
@@ -185,11 +213,12 @@ namespace TcAutomation.Commands
         public string SolutionPath { get; set; } = "";
         public string TaskName { get; set; } = "";
         public bool Success { get; set; }
+        public bool OutcomeUnknown { get; set; }
         public string? Message { get; set; }
         public bool PreviousDisabled { get; set; }
-        public bool PreviousAutoStart { get; set; }
+        public bool? PreviousAutoStart { get; set; }
         public bool NewDisabled { get; set; }
-        public bool NewAutoStart { get; set; }
+        public bool? NewAutoStart { get; set; }
         public string? ErrorMessage { get; set; }
     }
 }
