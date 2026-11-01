@@ -1,0 +1,35 @@
+{
+ "target": "192.0.2.10.1.1",
+ "route": "EXAMPLE-ROUTE",
+ "port": 851,
+ "tcVersion": "3.1.4024.0",
+ "fixtures": {
+  "xti": "master-Example",
+  "embedded": "master-Example-embedded",
+  "embeddedLib": "master-Example-embedded-lib"
+ },
+ "app": "Example_PLC",
+ "plc": "Example_PLC",
+ "solution": "C:\\path\\to\\copy\\Example.sln",
+ "cycles": "MAIN.ulCycleCount",
+ "gvlFile": "C:\\path\\to\\copy\\Example_PLC\\GVL_Example.TcGVL",
+ "gvlPath": "TIPC^Example_PLC^Example_PLC Project^GVL_Example",
+ "gvlSymbol": "GVL_Example",
+ "writes": {
+  "on": "GVL_Config.stPrm.rOn",
+  "hyst": "GVL_Config.stPrm.rHyst",
+  "flash": "GVL_Config.stPrm.bFlash",
+  "half": "GVL_Config.stPrm.tHalfPeriod",
+  "unknown": "GVL_Config.stPrm.NoSuchMember",
+  "hot": "GVL_Example.stStatus.rTemp",
+  "hotValid": "GVL_Example.stStatus.bTempValid",
+  "yellow": "GVL_Example.stStatus.bLampOut",
+  "expected": {
+   "on": "100",
+   "hyst": "5",
+   "flash": "False"
+  },
+  "changeTo": "99.5",
+  "hotLimit": 80
+ }
+}
