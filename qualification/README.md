@@ -34,7 +34,6 @@ These runners drive `mcp-server/server.py` through a real stdio MCP client again
 
 - A grant covers an operation and a target or context. It does not limit the symbol, the value or the requested state.
 - `run_t4.py deploy` trusts `site.json` to name the approved project copy. It checks the PLC name and port in that copy, not its source.
-- `run_t4.py` reads the port from the project files. `engineering.list_plcs` and `engineering.info` reported 851 for a PLC configured on 852 (measured).
 - Another client can change a value or the system state between a runner's read and its write. ADS has no compare-and-swap, and the worker routes Run to port 10000 when the system is not in Run.
 - If a tier-4 step fails part-way, the runner records `T4-STOP` and does not repeat the step. A person reconciles the target.
 - If a revoke is not confirmed, `run_t4.py` records `T4-REVOKE`. The grant then lasts until its server exits.

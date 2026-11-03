@@ -35,8 +35,8 @@ def msg(r):
 
 
 def configured_plcs(sln):
-    """{name: port} from the project files. engineering.list_plcs and engineering.info reported
-    851 for a PLC configured on 852 (measured)."""
+    """{name: port} from the project files, read without the worker. Workers before the port
+    fix reported 851 for a PLC configured on 852 (measured)."""
     refs = re.findall(r'^Project\("[^"]*"\)\s*=\s*"[^"]*",\s*"([^"]+\.tspp?roj)"',
                       sln.read_text(encoding="utf-8-sig"), re.MULTILINE | re.IGNORECASE)
     check(len(refs) == 1, f"{sln.name} names {len(refs)} TwinCAT projects, expected 1")
@@ -96,8 +96,8 @@ async def main(run, step):
             st["ctx"] = ctx
             listed = await c.run_op("engineering.list_plcs", {"contextHandle": ctx})
             check(listed.get("state") == "succeeded", f"list_plcs: {msg(listed)}")
-            names = [p.get("name") for p in res(listed).get("plcProjects") or []]
-            check(names == [PLC], f"{SLN.name} holds PLC projects {names}, expected only {PLC}")
+            plcs = [(p.get("name"), p.get("amsPort")) for p in res(listed).get("plcProjects") or []]
+            check(plcs == [(PLC, PORT)], f"{SLN.name} lists PLC projects {plcs}, expected only {PLC} on port {PORT}")
             info = await c.run_op("engineering.info", {"contextHandle": ctx})
             check(info.get("state") == "succeeded", f"info: {msg(info)}")
             return ctx, res(info)
