@@ -157,13 +157,9 @@ namespace TcAutomation.Core
                     Index = i
                 };
 
-                // Try to get AMS port from XML
                 try
                 {
-                    var xml = plcProject.ProduceXml();
-                    // Parse AMS port from XML if needed
-                    // For now, use default port calculation
-                    info.AmsPort = 850 + i;
+                    info.AmsPort = ConfiguredAdsPort(plcProject.ProduceXml(false));
                 }
                 catch { }
 
@@ -171,6 +167,16 @@ namespace TcAutomation.Core
             }
 
             return projects;
+        }
+
+        /// <summary>
+        /// The ADS port configured in a PLC project's tree-item XML, or null when the XML names none.
+        /// MatchingLoginCommand and OnlineChangeCommand read the same element.
+        /// </summary>
+        public static int? ConfiguredAdsPort(string treeItemXml)
+        {
+            var value = XDocument.Parse(treeItemXml).Root?.Element("PlcProjectDef")?.Element("AdsPort")?.Value;
+            return int.TryParse(value, out int port) ? port : (int?)null;
         }
 
         /// <summary>
@@ -347,6 +353,6 @@ namespace TcAutomation.Core
     {
         public string Name { get; set; } = "";
         public int Index { get; set; }
-        public int AmsPort { get; set; }
+        public int? AmsPort { get; set; }
     }
 }

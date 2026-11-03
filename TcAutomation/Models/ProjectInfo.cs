@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace TcAutomation.Models
 {
@@ -22,6 +23,7 @@ namespace TcAutomation.Models
     public class PlcInfo
     {
         public string Name { get; set; } = "";
-        public int AmsPort { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public int? AmsPort { get; set; }  // null when unknown, also under WhenWritingNull
     }
 }

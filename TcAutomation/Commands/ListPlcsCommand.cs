@@ -76,11 +76,10 @@ namespace TcAutomation.Commands
 
                     try
                     {
-                        string xml = plcProject.ProduceXml();
-                        plcInfo.AmsPort = ParseAmsPortFromXml(xml);
-
                         var iecProject = (TCatSysManagerLib.ITcPlcProject)plcProject;
                         plcInfo.BootProjectAutostart = iecProject.BootProjectAutostart;
+
+                        plcInfo.AmsPort = AutomationInterface.ConfiguredAdsPort(plcProject.ProduceXml(false));
                     }
                     catch (Exception ex)
                     {
@@ -97,17 +96,6 @@ namespace TcAutomation.Commands
 
             return result;
         }
-
-        private static int ParseAmsPortFromXml(string xml)
-        {
-            // Look for <AmsPort>851</AmsPort> pattern
-            var match = System.Text.RegularExpressions.Regex.Match(xml, @"<AmsPort>(\d+)</AmsPort>");
-            if (match.Success && int.TryParse(match.Groups[1].Value, out int port))
-            {
-                return port;
-            }
-            return 851; // Default PLC port
-        }
     }
 
     public class ListPlcsResult
@@ -123,7 +111,8 @@ namespace TcAutomation.Commands
     {
         public string Name { get; set; } = "";
         public int Index { get; set; }
-        public int AmsPort { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public int? AmsPort { get; set; }  // null when unknown, also under WhenWritingNull
         public bool BootProjectAutostart { get; set; }
         public string? Error { get; set; }
     }
