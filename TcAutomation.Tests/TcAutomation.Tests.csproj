@@ -33,6 +33,8 @@
     <Compile Include="LayoutTests.cs" />
     <Compile Include="PortTests.cs" />
     <Compile Include="CodeStateTests.cs" />
+    <Compile Include="LibraryInfoTests.cs" />
+    <Compile Include="TypedReadTests.cs" />
     <Compile Include="TcUnitTaskTests.cs" />
     <Compile Include="WatchdogTests.cs" />
     <Compile Include="ConsoleTests.cs" />

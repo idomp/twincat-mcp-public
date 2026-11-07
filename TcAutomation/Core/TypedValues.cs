@@ -73,6 +73,7 @@ namespace TcAutomation.Core
         public static int NumericSize(string primitive) => Numeric.TryGetValue(primitive, out var n) ? n : 0;
         public static bool IsTemporal(string primitive) => Temporal.ContainsKey(primitive);
         public static int TemporalSize(string primitive) => Temporal.TryGetValue(primitive, out var t) ? t.Size : 0;
+        public static string TemporalUnit(string primitive) => Temporal.TryGetValue(primitive, out var t) ? t.Unit : null;
         public static bool IsIntegerBase(string primitive) => IntegerBases.Contains(primitive);
 
         public static ChannelPlan Compile(string path, TypeNode type, int channel = 0)

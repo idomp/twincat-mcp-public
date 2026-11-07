@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- `engineering.generate_library` refuses a PLC project without Company, Title or Version before any build or export, `dryRun` included, and names each missing field. XAE refused such a project inside `SaveAsLibrary` ("not a managed library", measured for each field), after the export had started, so the result was an unknown outcome and the context expired.
+- `runtime.read_var` and `runtime.read_var_list` add `typedValue` and `typedUnit` for enums and TIME-family values, decoded from the bytes already read. An enum reads as `"0 (OFF)"`, a TIME as `"300000"` with unit `ms` (measured). `value` keeps the raw form, and both fields are null for other types.
 - `engineering.matching_login` waits up to 10 s for the PLC `CodeState` to be set before it decides. XAE leaves the value empty for a moment after the project loads: measured empty on the first read and set 1.1 s later, on TwinCAT 3.1.4024. The command refused a valid baseline with "CodeState: " before. A set value, right or wrong, is decided at once, so the wait cannot pass a mismatch. A value still empty after 10 s refuses with "CodeState: (empty after 10 s)".
 
 ### Typed ADS values

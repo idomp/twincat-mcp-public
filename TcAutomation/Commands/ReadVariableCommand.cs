@@ -55,10 +55,16 @@ namespace TcAutomation.Commands
                         result.Size = symbolInfo.Size;
 
                         // Read based on the type
-                        object value = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
+                        object value = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size, out var bytes);
                         
                         result.Value = value?.ToString() ?? "null";
                         result.RawValue = value;
+                        if (bytes != null)
+                        {
+                            var node = TcAutomation.Core.AdsTypedRead.Describe(symbolInfo);
+                            result.TypedValue = TcAutomation.Core.AdsTypedRead.Text(node, bytes, out var unit);
+                            result.TypedUnit = unit;
+                        }
                         result.Success = true;
                     }
                     finally
@@ -85,8 +91,9 @@ namespace TcAutomation.Commands
             }
         }
 
-        private static object ReadTypedValue(AdsClient client, uint handle, string typeName, int size)
+        private static object ReadTypedValue(AdsClient client, uint handle, string typeName, int size, out byte[] bytes)
         {
+            bytes = null;
             // Map TwinCAT types to .NET types
             string upperType = typeName.ToUpperInvariant();
 
@@ -121,6 +128,7 @@ namespace TcAutomation.Commands
             // For arrays and structs, read as byte array and return as hex
             byte[] data = new byte[size];
             client.Read(handle, data.AsMemory());
+            bytes = data;
             return BitConverter.ToString(data).Replace("-", " ");
         }
     }
@@ -135,6 +143,8 @@ namespace TcAutomation.Commands
         public object? RawValue { get; set; }
         public string DataType { get; set; } = "";
         public int Size { get; set; }
+        public string? TypedValue { get; set; }
+        public string? TypedUnit { get; set; }
         public string? ErrorMessage { get; set; }
     }
 }

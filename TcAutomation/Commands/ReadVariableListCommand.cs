@@ -72,9 +72,15 @@ namespace TcAutomation.Commands
                             handle = adsClient.CreateVariableHandle(symbolName);
                             handleCreated = true;
 
-                            object value = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
+                            object value = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size, out var bytes);
                             itemResult.Value = value?.ToString() ?? "null";
                             itemResult.RawValue = value;
+                            if (bytes != null)
+                            {
+                                var node = AdsTypedRead.Describe(symbolInfo);
+                                itemResult.TypedValue = AdsTypedRead.Text(node, bytes, out var unit);
+                                itemResult.TypedUnit = unit;
+                            }
                             itemResult.Success = true;
                         }
                         catch (AdsErrorException ex)
@@ -121,8 +127,9 @@ namespace TcAutomation.Commands
             }
         }
 
-        private static object ReadTypedValue(AdsClient client, uint handle, string typeName, int size)
+        private static object ReadTypedValue(AdsClient client, uint handle, string typeName, int size, out byte[] bytes)
         {
+            bytes = null;
             string upperType = typeName.ToUpperInvariant();
 
             if (upperType == "BOOL")
@@ -152,6 +159,7 @@ namespace TcAutomation.Commands
 
             byte[] data = new byte[size];
             client.Read(handle, data.AsMemory());
+            bytes = data;
             return BitConverter.ToString(data).Replace("-", " ");
         }
     }
@@ -176,6 +184,8 @@ namespace TcAutomation.Commands
         public object? RawValue { get; set; }
         public string DataType { get; set; } = "";
         public int Size { get; set; }
+        public string? TypedValue { get; set; }
+        public string? TypedUnit { get; set; }
         public string? ErrorMessage { get; set; }
     }
 }

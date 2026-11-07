@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Xml.Linq;
 using TCatSysManagerLib;
 using TcAutomation.Core;
 
@@ -52,6 +54,7 @@ namespace TcAutomation.Commands
                 var nested = ((ITcProjectRoot)vs.GetSystemManager().LookupTreeItem("TIPC^" + plcName)).NestedProject;
                 if (MatchingLoginCommand.IsLoggedIn(nested)) throw new InvalidOperationException("Library export requires an offline PLC project.");
                 var iec = nested as ITcPlcIECProject ?? throw new NotSupportedException("The documented ITcPlcIECProject export interface is unavailable.");
+                RequireLibraryInfo(nested.ProduceXml(false));
                 string path = ResolveOutputLibraryPath(solutionPath, plcName, libraryLocation);
                 result = Export(path, (output, install) => iec.SaveAsLibrary(output, install), skipBuild ? (Action)null : () =>
                 {
@@ -67,10 +70,24 @@ namespace TcAutomation.Commands
             }
             catch (Exception ex)
             {
-                result = result ?? new GenerateLibraryResult(); result.Success = false;
+                result = result ?? new GenerateLibraryResult { SolutionPath = solutionPath, PlcName = plcName, BuildSkipped = skipBuild, DryRun = dryRun };
+                result.Success = false;
                 result.OutcomeUnknown |= deadline.Expired || !vs.IsOwnedProcessRunning;
                 result.ErrorMessage = ex.Message; return result;
             }
+        }
+        // SaveAsLibrary refuses a project without Company, Title or Version ("not a
+        // managed library") after the export has started, which reads as an unknown
+        // outcome (measured for each field). The loaded project's XML holds the
+        // current values, unsaved edits included.
+        static readonly string[] LibraryFields = { "Company", "Title", "Version" };
+        public static void RequireLibraryInfo(string nestedProjectXml)
+        {
+            var info = XDocument.Parse(nestedProjectXml).Root?.Element("IECProjectDef")?.Element("ProjectInfo");
+            var missing = LibraryFields.Where(f => string.IsNullOrWhiteSpace(info?.Element(f)?.Value)).ToList();
+            if (missing.Count > 0)
+                throw new InvalidOperationException("The PLC project is not a managed library. Not set: " + string.Join(", ", missing) +
+                    ". Set them in the PLC project properties before a library export.");
         }
         // A single documented export call; false means do not install into the repository.
         public static GenerateLibraryResult Export(string output, Action<string, bool> saveAsLibrary, Action build, bool dryRun)

@@ -118,6 +118,7 @@
     <Compile Include="Core\TypedValues.cs" />
     <Compile Include="Core\AdsTypes.cs" />
     <Compile Include="Core\AdsTypedWrite.cs" />
+    <Compile Include="Core\AdsTypedRead.cs" />
     <Compile Include="Core\SessionFile.cs" />
     <Compile Include="Core\ActivationWait.cs" />
     <Compile Include="Core\TcUnitTasks.cs" />
