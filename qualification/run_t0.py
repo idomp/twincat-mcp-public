@@ -6,8 +6,9 @@ that does not exist, so no operation can reach a worker, XAE or a target.
 import asyncio
 import json
 import re
+import subprocess
 
-from harness import QUAL, V3, check, execute, guarded, server, site
+from harness import PY, QUAL, V3, check, execute, guarded, server, site
 
 FAKE = "192.0.2.1.1.1"  # TEST-NET-1: documentation range, never routed
 OTHER = "192.0.2.2.1.1"
@@ -18,6 +19,15 @@ def source_version():
     """VERSION in the engine.py that the server runs, or None. The server must report it."""
     m = re.search(r'^VERSION = "([^"]+)"$', (V3 / "mcp-server" / "twincat_mcp" / "engine.py").read_text(encoding="utf-8"), re.MULTILINE)
     return m and m.group(1)
+
+
+def source_catalog():
+    """(total, discoverable) counted from the catalog that the server runs."""
+    code = ("from twincat_mcp.catalog import Catalog; e = Catalog().entries; "
+            "print(len(e), sum(1 for v in e.values() if v.get('available', True) is not False))")
+    out = subprocess.run([str(PY), "-c", code], cwd=V3 / "mcp-server", capture_output=True, text=True, check=True).stdout
+    total, available = (int(x) for x in out.split())
+    return total, available
 
 
 def code_of(receipt):
@@ -49,7 +59,8 @@ async def main(run):
                 check(not err, f"search error {page}")
                 ids += [m["operation"] for m in page["matches"]]
                 offset = page["nextOffset"]
-            check(len(ids) == len(set(ids)) == 62, f"searchable {len(ids)} unique {len(set(ids))}")
+            total, searchable = source_catalog()
+            check(len(ids) == len(set(ids)) == searchable, f"searchable {len(ids)} unique {len(set(ids))}, source {searchable}")
             check(not set(ids) & set(SCOPE_OPS), "disabled Scope operations appear in search")
             all_ids = ids + SCOPE_OPS
             described = []
@@ -57,7 +68,7 @@ async def main(run):
                 d, err = await c.tool("twincat_describe", {"operations": all_ids[i:i + 5]})
                 check(not err, f"describe error {d}")
                 described += d["operations"]
-            check(len(described) == 66 and all("inputSchema" in e for e in described), f"described {len(described)}")
+            check(len(described) == total and all("inputSchema" in e for e in described), f"described {len(described)}, source {total}")
             unavailable = sorted(e["id"] for e in described if e.get("available") is False)
             check(unavailable == sorted(SCOPE_OPS), f"unavailable {unavailable}")
             state["ids"] = all_ids
@@ -71,7 +82,7 @@ async def main(run):
             check(err and bad.get("code") == "invalid_arguments", f"extra field: {bad}")
             bad, err = await c.tool("twincat_execute", {"arguments": {}})
             check(err and bad.get("code") == "invalid_arguments", f"missing operation: {bad}")
-            return "3 tools, 62 searchable, 66 describable, 4 unavailable, malformed calls rejected"
+            return f"3 tools, {searchable} searchable, {total} describable, {len(SCOPE_OPS)} unavailable, malformed calls rejected"
 
         await guarded(run, "L01", 0, l01())
 
@@ -81,10 +92,11 @@ async def main(run):
             check(want, 'engine.py has no line VERSION = "..."')
             s = await c.ctl("system.status")
             check(s.get("success") and s["version"] == want, f"version {s.get('version')}, source {want}")
-            check(s["operations"] == 66, f"operations {s['operations']}")
+            total, _ = source_catalog()
+            check(s["operations"] == total, f"operations {s['operations']}, source {total}")
             check(sorted(s["unavailableOperations"]) == sorted(SCOPE_OPS), f"unavailable {s['unavailableOperations']}")
             check(s["protocol"] == "2026-07-28", f"protocol {s['protocol']}")
-            return f"version {s['version']}, 66 operations, protocol {s['protocol']}"
+            return f"version {s['version']}, {total} operations, protocol {s['protocol']}"
 
         await guarded(run, "C10", 0, c10())
 

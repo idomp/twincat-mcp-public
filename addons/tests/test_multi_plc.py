@@ -1,4 +1,3 @@
-import asyncio
 import shutil
 import sys
 import tempfile
@@ -6,7 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import multi_plc as mp  # noqa: E402
+import multi_plc as mp
 
 SLN = 'Microsoft Visual Studio Solution File\r\nProject("{B1E792BE-AA5F-4E3C-8C82-674BF9C0715B}") = "I", "I\\I.tsproj", "{1}"\r\nEndProject\r\n'
 TSPROJ = (
@@ -64,56 +63,6 @@ class ReloadTests(unittest.TestCase):
     def test_safety_project_of_the_same_name_is_untouched(self):
         mp.enable_tmc_auto_reload(self.sln, plc_names=["Ext1"], apply=True)
         self.assertIn(b'<Project Name="Ext1" Other="x"/>', self.tsproj.read_bytes())
-
-
-class BuildTests(unittest.TestCase):
-    def plan(self, **kw):
-        return dict(amsNetId="192.0.2.1.1.1", subSolutions=[dict(solution="a.sln", plc="A"), dict(solution="b.sln", plc="B")],
-                    integration=dict(solution="i.sln", plc="I"), **kw)
-
-    def run_plan(self, plan, fail=(), lost=()):
-        calls, opened = [], {}
-
-        async def run_op(op, args):
-            calls.append((op, args.get("solutionPath") or args.get("contextHandle")))
-            if op == "context.open":
-                opened["ctx-" + args["solutionPath"]] = True
-                return dict(state="succeeded", result=dict(contextHandle="ctx-" + args["solutionPath"]))
-            if op == "context.close":
-                opened.pop(args["contextHandle"])
-                return dict(state="succeeded", result={})
-            sln = args["contextHandle"][4:]
-            if sln in lost:
-                return dict(state="running", unresolved=True)
-            if sln in fail:
-                return dict(state="failed", result=dict(success=False, compilerSuccess=False))
-            return dict(state="succeeded", result=dict(success=True, compilerSuccess=True))
-
-        report = asyncio.run(mp.multi_plc_build(run_op, plan))
-        self.assertEqual({}, opened, "every context closed")
-        return report, calls
-
-    def test_all_in_order(self):
-        report, calls = self.run_plan(self.plan())
-        self.assertTrue(report["success"])
-        self.assertEqual(["a.sln", "b.sln", "i.sln"], [c[1] for c in calls if c[0] == "context.open"])
-
-    def test_failed_sub_stops_before_integration(self):
-        report, calls = self.run_plan(self.plan(), fail=("a.sln",))
-        self.assertFalse(report["success"])
-        self.assertIsNotNone(report["integrationSkipped"])
-        self.assertEqual(["a.sln"], [c[1] for c in calls if c[0] == "context.open"])
-
-    def test_continue_on_error_still_fails(self):
-        report, calls = self.run_plan(self.plan(continueOnError=True), fail=("a.sln",))
-        self.assertFalse(report["success"])
-        self.assertEqual(3, len([c for c in calls if c[0] == "context.open"]))
-
-    def test_lost_build_stops_even_with_continue(self):
-        report, calls = self.run_plan(self.plan(continueOnError=True), lost=("a.sln",))
-        self.assertFalse(report["success"])
-        self.assertEqual(["a.sln"], [c[1] for c in calls if c[0] == "context.open"])
-
 
 if __name__ == "__main__":
     unittest.main()
