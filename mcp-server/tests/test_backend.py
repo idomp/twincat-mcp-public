@@ -95,7 +95,9 @@ class BackendTests(unittest.TestCase):
         with (
             patch.object(host, "is_alive", return_value=True),
             patch.object(
-                host, "_call_raw_locked", return_value={"loaded": True, "solutionPath": "sample.sln"}
+                host,
+                "_call_raw_locked",
+                return_value={"loaded": True, "solutionPath": "sample.sln"},
             ) as call,
         ):
             host.ensure_solution("sample.sln", None)
@@ -121,7 +123,9 @@ class BackendTests(unittest.TestCase):
         host = ShellHost(Path("unused.exe"))
         with (
             patch.object(host, "is_alive", return_value=True),
-            patch.object(host, "_call_raw_locked", return_value={"loaded": False, "solutionPath": "s.sln"}) as call,
+            patch.object(
+                host, "_call_raw_locked", return_value={"loaded": False, "solutionPath": "s.sln"}
+            ) as call,
             patch("twincat_mcp.dispatch.get_shell_host", return_value=host),
         ):
             result, _ = run_shell_step("activate", {}, solution_path="s.sln")
@@ -393,9 +397,24 @@ class ListResultNormalizeTests(unittest.TestCase):
 class ListWriteValueTests(unittest.TestCase):
     def test_backend_sends_json_numbers_and_booleans_to_the_worker(self):
         entry = Catalog().get("runtime.write_var_list")
-        args = {"amsNetId": "192.0.2.1.1.1", "port": 851, "grantHandle": "g",
-                "variables": {"GVL.n": 18446744073709551615, "GVL.r": 42.0, "GVL.b": True, "GVL.s": "3.14", "GVL.z": -0.0}}
-        with patch("twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])) as step:
+        args = {
+            "amsNetId": "192.0.2.1.1.1",
+            "port": 851,
+            "grantHandle": "g",
+            "variables": {
+                "GVL.n": 18446744073709551615,
+                "GVL.r": 42.0,
+                "GVL.b": True,
+                "GVL.s": "3.14",
+                "GVL.z": -0.0,
+            },
+        }
+        with patch(
+            "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
+        ) as step:
             Backend().run(entry, dict(args), None)
         sent = step.call_args.args[1]["variables"]
-        self.assertEqual(sent, '{"GVL.n": 18446744073709551615, "GVL.r": 42.0, "GVL.b": true, "GVL.s": "3.14", "GVL.z": -0.0}')
+        self.assertEqual(
+            sent,
+            '{"GVL.n": 18446744073709551615, "GVL.r": 42.0, "GVL.b": true, "GVL.s": "3.14", "GVL.z": -0.0}',
+        )
