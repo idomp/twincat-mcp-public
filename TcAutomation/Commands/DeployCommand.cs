@@ -165,11 +165,14 @@ namespace TcAutomation.Commands
                         continue;
                     }
 
+                    // Not an IEC project: nothing to boot. A named PLC that is skipped stays not found.
+                    if (!(plcProject is ITcPlcProject iecProject))
+                        continue;
+
                     foundTargetPlc = true;
 
                     if (!dryRun)
                     {
-                        ITcPlcProject iecProject = (ITcPlcProject)plcProject;
                         iecProject.BootProjectAutostart = true;
                         iecProject.GenerateBootProject(true);
                     }
@@ -186,6 +189,13 @@ namespace TcAutomation.Commands
                     }
                     result.Success = false;
                     result.ErrorMessage = $"PLC '{plcName}' not found. Available: {string.Join(", ", availablePlcs)}";
+                    return result;
+                }
+                if (deployedPlcs.Count == 0)
+                {
+                    // Before activation: an activation with no boot project selected would still restart TwinCAT.
+                    result.Success = false;
+                    result.ErrorMessage = "No IEC PLC project to deploy.";
                     return result;
                 }
 

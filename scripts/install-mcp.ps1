@@ -13,10 +13,12 @@ if ($Workspace) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     $path = Join-Path $directory "mcp.json"
     # Preserve other registered servers and inputs.
-    $config = if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+    # UTF-8 both ways: Windows PowerShell 5.1 reads a file without a BOM in the ANSI code page.
+    $config = if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } else { [pscustomobject]@{} }
     if (-not $config.PSObject.Properties['servers']) { $config | Add-Member -NotePropertyName servers -NotePropertyValue ([pscustomobject]@{}) }
     $config.servers | Add-Member -NotePropertyName "twincat-automation" -NotePropertyValue $entry -Force
-    $config | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $path -Encoding utf8
+    # Without a BOM: Set-Content -Encoding utf8 writes one under Windows PowerShell 5.1.
+    [IO.File]::WriteAllText($path, ($config | ConvertTo-Json -Depth 50), (New-Object Text.UTF8Encoding($false)))
     Write-Host "Registered TwinCAT MCP in $path"
 } else {
     $command = if ($Insiders) { "code-insiders" } else { "code" }

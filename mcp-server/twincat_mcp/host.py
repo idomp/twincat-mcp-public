@@ -83,6 +83,14 @@ class HostError(Exception):
     to the legacy CLI path."""
 
 
+class NotDispatched(HostError):
+    """Raised before any execute-step was sent, so the target was not touched."""
+
+
+class SolutionNotConfirmed(NotDispatched):
+    """The worker did not confirm the solution."""
+
+
 # -----------------------------------------------------------------------------
 # ShellHost
 # -----------------------------------------------------------------------------
@@ -192,6 +200,13 @@ class ShellHost:
             self._current_solution = None
             self._current_tc_version = None
             res = self._call_raw_locked("ensure-solution", params, timeout=timeout)
+            # Cache only a solution the worker reports loaded, under the requested path.
+            reported = res.get("solutionPath") if isinstance(res, dict) else None
+            loaded = res.get("loaded") if isinstance(res, dict) else None
+            if loaded is not True or not reported or not _paths_equal(str(reported), solution_path):
+                raise SolutionNotConfirmed(
+                    f"worker did not confirm '{solution_path}' (loaded={loaded!r}, solutionPath={reported!r})"
+                )
             self._current_solution = solution_path
             self._current_tc_version = tc_version
             return res
@@ -265,8 +280,13 @@ class ShellHost:
             }
             if command in shell_commands:
                 if not solution_path:
-                    raise HostError(f"{command} requires a solution path")
-                self.ensure_solution(solution_path, tc_version)
+                    raise NotDispatched(f"{command} requires a solution path")
+                try:
+                    self.ensure_solution(solution_path, tc_version)
+                except NotDispatched:
+                    raise
+                except HostError as exc:  # a lost or failed ensure-solution: no step was sent yet
+                    raise SolutionNotConfirmed(str(exc)) from exc
 
             with self._lock:
                 if not self.is_alive():
@@ -279,7 +299,13 @@ class ShellHost:
                     self._progress.clear()
 
                 params = {"command": command, "args": step_args or {}}
-                resp = self._call_raw_locked("execute-step", params, timeout=timeout)
+                try:
+                    resp = self._call_raw_locked("execute-step", params, timeout=timeout)
+                except HostError as exc:
+                    # On a lost reply these lines are the only record of how far the step got.
+                    with self._progress_lock:
+                        exc.progress = list(self._progress)
+                    raise
 
                 # HandleExecuteStep wraps: {command, result: <inner>}
                 # We want the inner command result.
@@ -325,9 +351,10 @@ class ShellHost:
         if self.is_alive():
             return
 
-        # A new host holds no solution, whatever the previous one held.
+        # A new host holds no solution, whatever the previous one held, and has not reported ready.
         self._current_solution = None
         self._current_tc_version = None
+        self._ready_info = None
 
         cmd = [str(self._exe_path), "host", "--mcp-pid", str(os.getpid())]
         try:

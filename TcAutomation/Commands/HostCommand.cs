@@ -288,7 +288,9 @@ namespace TcAutomation.Commands
                 OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion);
                 openedFresh = true;
             }
+            // Also reload a solution that never finished loading: ReloadSolution sets the path first.
             else if (!PathsEqual(_vsInstance.SolutionFilePath, solutionPath)
+                || !_vsInstance.IsSolutionLoaded
                 || !string.Equals(_loadedTcVersion, effectiveTcVersion, StringComparison.OrdinalIgnoreCase))
             {
                 EmitProgress($"host: switching solution -> {Path.GetFileName(solutionPath)} ...");
@@ -324,7 +326,9 @@ namespace TcAutomation.Commands
                 loaded = _vsInstance != null && _vsInstance.IsSolutionLoaded,
                 openedFresh,
                 reloaded,
-                solutionPath,
+                // The path the shell holds, so the client does not confirm the request against itself.
+                solutionPath = _vsInstance?.SolutionFilePath,
+                requestedSolutionPath = solutionPath,
                 tcVersion = effectiveTcVersion,
                 dtePid = _vsInstance?.DteProcessId
             }, sw);

@@ -86,6 +86,7 @@ namespace TcAutomation.Commands
             bool skipBuild = false)
         {
             var result = new TcUnitResult();
+            var startedUtc = DateTime.UtcNow;  // the server's budget includes the XAE load below
 
             if (!File.Exists(solutionPath))
             {
@@ -128,7 +129,7 @@ namespace TcAutomation.Commands
                 return ExecuteInSession(
                     vsInstance, solutionPath,
                     amsNetId, taskName, plcName,
-                    timeoutMinutes, disableIo, skipBuild);
+                    timeoutMinutes, disableIo, skipBuild, startedUtc);
             }
             catch (Exception ex)
             {
@@ -168,10 +169,15 @@ namespace TcAutomation.Commands
             string? plcName = null,
             int timeoutMinutes = 10,
             bool disableIo = false,
-            bool skipBuild = false)
+            bool skipBuild = false,
+            DateTime? startedUtc = null)
         {
             var result = new TcUnitResult();
             var stopwatch = Stopwatch.StartNew();
+            // One deadline for the wait and the poll, so a slow Run cannot starve the poll. It is
+            // moved earlier once the task count is known, to leave room for the restore.
+            var runStart = startedUtc ?? DateTime.UtcNow;
+            var deadline = TcUnitTasks.PollDeadline(runStart, timeoutMinutes, 0);
 
             amsNetId = amsNetId ?? "127.0.0.1.1.1";
 
@@ -179,6 +185,7 @@ namespace TcAutomation.Commands
 
             AdsClient? adsClient = null;
             int? dialogWatchdogPid = null;
+            Action? restoreTasks = null;  // the project keeps the user's task states after the run
 
             try
             {
@@ -254,7 +261,9 @@ namespace TcAutomation.Commands
                 ITcSmTreeItem realTimeConfig = sysManager.LookupTreeItem("TIRT");
                 if (!string.IsNullOrEmpty(taskName))
                 {
-                    ConfigureTask(realTimeConfig, taskName, true);
+                    var tasks = ConfigureTask(realTimeConfig, taskName, true);
+                    restoreTasks = tasks.Restore;
+                    deadline = TcUnitTasks.PollDeadline(runStart, timeoutMinutes, tasks.ChangedTasks);
                     Progress("config", $"Configured task '{taskName}' for testing");
                 }
                 else
@@ -264,7 +273,9 @@ namespace TcAutomation.Commands
                     {
                         var singleTask = realTimeConfig.Child[1];
                         taskName = GetTaskName(singleTask);
-                        ConfigureTask(realTimeConfig, taskName, true);  // Still disable others for consistency
+                        var tasks = ConfigureTask(realTimeConfig, taskName, true);  // Still disable others for consistency
+                        restoreTasks = tasks.Restore;
+                        deadline = TcUnitTasks.PollDeadline(runStart, timeoutMinutes, tasks.ChangedTasks);
                         Progress("config", $"Auto-detected task '{taskName}'");
                     }
                     else
@@ -284,6 +295,7 @@ namespace TcAutomation.Commands
                 // configuration state that is only set during an actual build.
                 Progress("config", "Enabling boot project autostart...");
                 int amsPort = 851;
+                int iecProjects = 0;
                 for (int i = 1; i <= plcConfig.ChildCount; i++)
                 {
                     ITcSmTreeItem plcProject = plcConfig.Child[i];
@@ -293,17 +305,19 @@ namespace TcAutomation.Commands
                     if (!string.IsNullOrEmpty(plcName) && !plcProjectName.Equals(plcName, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    ITcPlcProject iecProject = (ITcPlcProject)plcProject;
+                    if (!(plcProject is ITcPlcProject iecProject))
+                        continue;  // not an IEC project
+                    // The port the test results are read from; a guessed default would wait on the wrong PLC.
+                    amsPort = AutomationInterface.ConfiguredAdsPort(plcProject.ProduceXml(false))
+                        ?? throw new InvalidOperationException($"PLC '{plcProjectName}' has no ADS port in its project XML.");
                     iecProject.BootProjectAutostart = true;
-
-                    // Get AMS port from project XML (read-only)
-                    string xml = plcProject.ProduceXml();
-                    var extractedPort = ExtractAmsPort(xml);
-                    Console.Error.WriteLine($"[DEBUG] ExtractAmsPort for '{plcProjectName}': {extractedPort?.ToString() ?? "null"}");
-                    amsPort = extractedPort ?? 851;
+                    iecProjects++;
 
                     Progress("config", $"BootProjectAutostart enabled for '{plcProjectName}' (port {amsPort})");
                 }
+                if (iecProjects == 0)
+                    throw new InvalidOperationException(string.IsNullOrEmpty(plcName)
+                        ? "No IEC PLC project to test." : $"No IEC PLC project named '{plcName}'.");
                 Thread.Sleep(1000);
 
                 // Set target
@@ -359,13 +373,12 @@ namespace TcAutomation.Commands
                 Progress("restart", "TwinCAT restart initiated");
 
                 // Wait for TwinCAT to be in Run state
-                Progress("wait", $"Waiting for PLC to enter Run state (timeout: {timeoutMinutes} min)...");
+                Progress("wait", $"Waiting for PLC to enter Run state (run deadline {deadline:HH:mm:ss} UTC)...");
                 adsClient = new AdsClient();
-                var timeout = DateTime.Now.AddMinutes(timeoutMinutes);
                 bool plcRunning = false;
                 int waitAttempts = 0;
 
-                while (DateTime.Now < timeout)
+                while (DateTime.UtcNow < deadline)
                 {
                     try
                     {
@@ -419,7 +432,7 @@ namespace TcAutomation.Commands
                 string currentTestSuite = "";
                 string currentTestName = "";
 
-                while (DateTime.Now < timeout)
+                while (DateTime.UtcNow < deadline)
                 {
                     Thread.Sleep(5000);
                     pollCount++;
@@ -613,6 +626,16 @@ namespace TcAutomation.Commands
             }
             finally
             {
+                if (restoreTasks != null)
+                {
+                    try { restoreTasks(); Progress("config", "Restored the original task states in the project"); }
+                    catch (Exception ex)
+                    {
+                        result.Success = false;
+                        result.ErrorMessage = ((result.ErrorMessage ?? "") + " " + ex.Message).Trim();
+                        Progress("error", ex.Message);
+                    }
+                }
                 if (dialogWatchdogPid.HasValue)
                 {
                     try { DialogWatchdog.Stop(dialogWatchdogPid.Value); } catch { }
@@ -641,32 +664,14 @@ namespace TcAutomation.Commands
             catch { }
         }
 
-        private static void ConfigureTask(ITcSmTreeItem realTimeConfig, string taskName, bool disableOthers)
+        private static TaskConfiguration ConfigureTask(ITcSmTreeItem realTimeConfig, string taskName, bool disableOthers)
         {
+            var tasks = new List<ITaskNode>();
             for (int i = 1; i <= realTimeConfig.ChildCount; i++)
-            {
-                ITcSmTreeItem task = realTimeConfig.Child[i];
-                string xml = task.ProduceXml();
-                string currentTaskName = GetTaskNameFromXml(xml);
-
-                bool isTargetTask = currentTaskName.Equals(taskName, StringComparison.OrdinalIgnoreCase);
-                
-                if (isTargetTask)
-                {
-                    // Enable and autostart the test task — all via XML like TcUnit-Runner
-                    string newXml = SetDisabledAndAutoStartInXml(xml, false, true);
-                    task.ConsumeXml(newXml);
-                }
-                else if (disableOthers)
-                {
-                    // Disable other tasks — all via XML like TcUnit-Runner
-                    string newXml = SetDisabledAndAutoStartInXml(xml, true, false);
-                    task.ConsumeXml(newXml);
-                }
-
-                // Same 3 second delay as TcUnit-Runner after each task update
-                Thread.Sleep(3000);
-            }
+                tasks.Add(new TreeTaskNode(realTimeConfig.Child[i]));
+            // Same 3 second delay as TcUnit-Runner after each task update. The restore runs inside the
+            // last 30 s of the server's budget, so it waits 1 s, as ConfigureTaskCommand does.
+            return TcUnitTasks.Configure(tasks, taskName, disableOthers, () => Thread.Sleep(3000), () => Thread.Sleep(1000));
         }
 
         private static string GetTaskName(ITcSmTreeItem task)
@@ -689,48 +694,6 @@ namespace TcAutomation.Commands
             {
                 return "";
             }
-        }
-
-        private static string SetDisabledAndAutoStartInXml(string xml, bool disabled, bool autostart)
-        {
-            try
-            {
-                var doc = new XmlDocument();
-                doc.LoadXml(xml);
-
-                // Set Disabled flag: /TreeItem/TaskDef/Disabled
-                var disabledNode = doc.SelectSingleNode("/TreeItem/TaskDef/Disabled");
-                if (disabledNode != null)
-                    disabledNode.InnerText = disabled ? "true" : "false";
-
-                // Set AutoStart flag: /TreeItem/TaskDef/AutoStart
-                var autostartNode = doc.SelectSingleNode("/TreeItem/TaskDef/AutoStart");
-                if (autostartNode != null)
-                    autostartNode.InnerText = autostart.ToString().ToLower();
-
-                return doc.OuterXml;
-            }
-            catch
-            {
-                return xml;
-            }
-        }
-
-        private static int? ExtractAmsPort(string xml)
-        {
-            try
-            {
-                var doc = new XmlDocument();
-                doc.LoadXml(xml);
-                
-                // TwinCAT uses AdsPort (not AmsPort) in the PlcProjectDef element
-                // Path: /TreeItem/PlcProjectDef/AdsPort
-                var portNode = doc.SelectSingleNode("/TreeItem/PlcProjectDef/AdsPort");
-                if (portNode != null && int.TryParse(portNode.InnerText, out int port))
-                    return port;
-            }
-            catch { }
-            return null;
         }
 
         private static int ExtractNumber(string text, string marker)

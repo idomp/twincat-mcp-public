@@ -32,6 +32,10 @@
     <Compile Include="ActivationWaitTests.cs" />
     <Compile Include="LayoutTests.cs" />
     <Compile Include="PortTests.cs" />
+    <Compile Include="TcUnitTaskTests.cs" />
+    <Compile Include="WatchdogTests.cs" />
+    <Compile Include="ConsoleTests.cs" />
+    <Compile Include="BuildOutputTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

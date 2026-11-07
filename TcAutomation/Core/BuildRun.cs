@@ -89,9 +89,7 @@ namespace TcAutomation.Core
                     throw new TimeoutException("Build deadline expired; outcome is unknown.");
                 run.CompletedUtc = DateTime.UtcNow;
                 run.FailedProjects = solution.LastBuildInfo;
-                var after = CapturePanes(vs);
-                run.Output = string.Join("\n", after.Select(p => new { p.Key, Text = OutputDelta(before.TryGetValue(p.Key, out var old) ? old : "", p.Value) })
-                    .Where(p => !string.IsNullOrWhiteSpace(p.Text)).Select(p => "[" + p.Key + "]\n" + p.Text));
+                run.Output = Compose(before, CapturePanes(vs));
                 return run;
             }
             catch (Exception ex) when (deadlineExpired)
@@ -106,20 +104,91 @@ namespace TcAutomation.Core
             }
         }
 
-        static Dictionary<string, string> CapturePanes(VisualStudioInstance vs, bool clear = false)
+        public const int MaxOutputChars = 65536;
+        public const string CaptureErrorsKey = "capture errors";
+        const string BuildPaneGuid = "{1BD8A850-02D1-11D1-BEE7-00A0C913D1F8}";  // vsOutputWindowPaneGuid Build, not localized
+
+        static Dictionary<string, string> CapturePanes(VisualStudioInstance vs, bool clear = false) =>
+            Collect(() => vs.Dte.ToolWindows.OutputWindow.OutputWindowPanes, item =>
+            {
+                var pane = (OutputWindowPane)item;
+                if (clear) pane.Clear();
+                var document = pane.TextDocument;
+                if (document == null) return null;
+                // A pane whose name or GUID cannot be read still keeps its text.
+                string name, guid;
+                try { name = pane.Name; } catch (Exception) { name = "pane"; }
+                try { guid = pane.Guid; } catch (Exception) { guid = "{guid unavailable}"; }  // the same key in both passes
+                return new KeyValuePair<string, string>(name + " " + guid, document.StartPoint.CreateEditPoint().GetText(document.EndPoint));
+            });
+
+        // Diagnostics never fail a build: the collection, the enumerator and each pane can throw.
+        // Partial output is kept, and each failure is reported under CaptureErrorsKey.
+        public static Dictionary<string, string> Collect(Func<System.Collections.IEnumerable> panes, Func<object, KeyValuePair<string, string>?> read)
         {
             var result = new Dictionary<string, string>();
-            foreach (OutputWindowPane pane in vs.Dte.ToolWindows.OutputWindow.OutputWindowPanes)
+            var errors = new List<string>();
+            try
             {
-                try
+                foreach (var pane in panes())
                 {
-                    if (clear) pane.Clear();
-                    var document = pane.TextDocument;
-                    result[pane.Name + " " + pane.Guid] = document.StartPoint.CreateEditPoint().GetText(document.EndPoint);
+                    try
+                    {
+                        var text = read(pane);
+                        if (text.HasValue) result[text.Value.Key] = text.Value.Value;
+                    }
+                    catch (Exception ex) { errors.Add("pane unavailable: " + ex.Message); }
                 }
-                catch (System.Runtime.InteropServices.COMException) { }
             }
+            catch (Exception ex) { errors.Add("output capture failed: " + ex.Message); }
+            if (errors.Count > 0) result[CaptureErrorsKey] = string.Join("\n", errors) + "\n";
             return result;
+        }
+
+        static bool IsBuildPane(string key) =>
+            key.IndexOf(BuildPaneGuid, StringComparison.OrdinalIgnoreCase) >= 0
+            || key.IndexOf("build", StringComparison.OrdinalIgnoreCase) >= 0
+            || key.IndexOf("twincat", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        // Build panes first. Over the cap, every pane gets a fair share and keeps its tail, where the compiler
+        // writes its last error. Markers count toward the cap.
+        public static string Compose(Dictionary<string, string> before, Dictionary<string, string> after)
+        {
+            var panes = after.Where(p => p.Key != CaptureErrorsKey)
+                .Select(p => new { Head = "[" + p.Key + "]\n", Text = OutputDelta(before.TryGetValue(p.Key, out var old) ? old : "", p.Value) })
+                .Where(p => !string.IsNullOrWhiteSpace(p.Text))
+                .OrderBy(p => IsBuildPane(p.Head) ? 0 : 1)
+                .ToList();
+            // Capture errors are reported as they are, from both passes; a delta would hide a repeated one.
+            string errors = (before.TryGetValue(CaptureErrorsKey, out var e1) ? "before the build: " + e1 : "")
+                          + (after.TryGetValue(CaptureErrorsKey, out var e2) ? e2 : "");
+            if (errors.Length > 0) panes.Insert(0, new { Head = "[" + CaptureErrorsKey + "]\n", Text = errors.Length > 4096 ? errors.Substring(0, 4096) + "\n" : errors });
+            int whole = panes.Sum(p => p.Head.Length + p.Text.Length) + Math.Max(0, panes.Count - 1);
+            if (whole <= MaxOutputChars) return string.Join("\n", panes.Select(p => p.Head + p.Text));
+
+            const int Marker = 48;  // room for "[N earlier characters omitted]\n"
+            int budget = MaxOutputChars - Math.Max(0, panes.Count - 1);
+            var keep = new int[panes.Count];
+            var open = Enumerable.Range(0, panes.Count).ToList();
+            while (open.Count > 0)
+            {
+                int share = budget / open.Count;
+                var fits = open.Where(i => panes[i].Head.Length + panes[i].Text.Length <= share).ToList();
+                if (fits.Count == 0)
+                {
+                    foreach (var i in open) keep[i] = Math.Max(0, share - panes[i].Head.Length - Marker);
+                    break;
+                }
+                foreach (var i in fits) { keep[i] = panes[i].Text.Length; budget -= panes[i].Head.Length + panes[i].Text.Length; open.Remove(i); }
+            }
+            var parts = panes.Select((p, i) => keep[i] >= p.Text.Length ? p.Head + p.Text
+                : p.Head + $"[{p.Text.Length - keep[i]} earlier characters omitted]\n" + p.Text.Substring(p.Text.Length - keep[i])).ToList();
+            // Headers and markers alone can exceed the cap with many panes: drop trailing panes, which sort last.
+            int dropped = 0;
+            const int Tail = 40;  // room for "\n[N more panes omitted]"
+            while (parts.Count > 1 && parts.Sum(s => s.Length) + parts.Count - 1 + (dropped > 0 ? Tail : 0) > MaxOutputChars) { parts.RemoveAt(parts.Count - 1); dropped++; }
+            var text = string.Join("\n", parts) + (dropped > 0 ? $"\n[{dropped} more panes omitted]" : "");
+            return text.Length <= MaxOutputChars ? text : text.Substring(0, MaxOutputChars);
         }
     }
 }

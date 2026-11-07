@@ -85,6 +85,13 @@ namespace TcAutomation.Core
         private static readonly Dictionary<int, DateTime> _pidStarts = new Dictionary<int, DateTime>();
         private static Thread? _thread;
         private static volatile bool _running;
+        private static int _liveWorkers;
+
+        /// <summary>Watchdog threads that are running now. At most one.</summary>
+        public static int LiveWorkers => Volatile.Read(ref _liveWorkers);
+
+        /// <summary>How long Stop waits for the thread. Tests set 0 to model a stuck tick.</summary>
+        public static int StopJoinMs { get; set; } = 1000;
 
         // Polling interval. 150ms is fast enough that a dialog appearing
         // between ticks is dismissed before the user perceives a flash
@@ -135,6 +142,8 @@ namespace TcAutomation.Core
                 if (_running) return;
 
                 _running = true;
+                // A thread whose Join timed out has not exited: it re-checks _running under this lock.
+                if (_thread != null) return;
                 _thread = new Thread(Run)
                 {
                     IsBackground = true,
@@ -173,25 +182,38 @@ namespace TcAutomation.Core
                 if (_pidRefCounts.Count == 0)
                 {
                     _running = false;
-                    toJoin = _thread;
-                    _thread = null;
+                    toJoin = _thread;  // the thread clears _thread itself when it exits
                 }
             }
 
             if (toJoin != null)
             {
-                try { toJoin.Join(1000); } catch { }
+                try { toJoin.Join(StopJoinMs); } catch { }
             }
         }
 
         private static void Run()
         {
-            while (_running)
+            Interlocked.Increment(ref _liveWorkers);
+            try
             {
-                try { EnumWindows(OnWindow, IntPtr.Zero); }
-                catch { /* RPC / transient UI errors — next tick retries */ }
-                Thread.Sleep(TickMs);
+                while (true)
+                {
+                    // Exit and clear _thread under the lock, so Start either sees no thread or one that keeps running.
+                    lock (_lock)
+                    {
+                        if (!_running)
+                        {
+                            if (ReferenceEquals(_thread, Thread.CurrentThread)) _thread = null;
+                            return;
+                        }
+                    }
+                    try { EnumWindows(OnWindow, IntPtr.Zero); }
+                    catch { /* RPC / transient UI errors — next tick retries */ }
+                    Thread.Sleep(TickMs);
+                }
             }
+            finally { Interlocked.Decrement(ref _liveWorkers); }
         }
 
         private static bool OnWindow(IntPtr hWnd, IntPtr lParam)
@@ -341,6 +363,12 @@ namespace TcAutomation.Core
 
         private static bool ClickButton(IntPtr dialog, string buttonText)
         {
+            // Re-check just before acting: Stop can deregister the shell while this callback runs.
+            GetWindowThreadProcessId(dialog, out var pid);
+            lock (_lock)
+            {
+                if (!_pidStarts.ContainsKey((int)pid)) return false;
+            }
             IntPtr btn = FindChildButton(dialog, buttonText);
             if (btn != IntPtr.Zero)
             {

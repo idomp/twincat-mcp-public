@@ -48,6 +48,23 @@ class BackendTests(unittest.TestCase):
             self.assertTrue(result["outcomeUnknown"])
             host.execute_step.assert_called_once()
 
+    def test_lost_reply_keeps_progress(self):
+        host = ShellHost(Path("unused.exe"))
+
+        def lost(*_args, **_kwargs):
+            with host._progress_lock:
+                host._progress.append("waiting for Run")
+            raise HostError("lost reply")
+
+        with (
+            patch.object(host, "is_alive", return_value=True),
+            patch.object(host, "_call_raw_locked", side_effect=lost),
+            patch("twincat_mcp.dispatch.get_shell_host", return_value=host),
+        ):
+            result, progress = run_shell_step("set-state", {})
+        self.assertTrue(result["outcomeUnknown"])
+        self.assertEqual(["waiting for Run"], progress)
+
     def test_missing_host_does_not_fallback(self):
         with patch("twincat_mcp.dispatch.get_shell_host", return_value=None):
             result, _ = run_shell_step("online-change", {})
@@ -77,10 +94,79 @@ class BackendTests(unittest.TestCase):
                 host.ensure_solution("sample.sln", "3.1.4024.55")
         with (
             patch.object(host, "is_alive", return_value=True),
-            patch.object(host, "_call_raw_locked", return_value={"loaded": True}) as call,
+            patch.object(
+                host, "_call_raw_locked", return_value={"loaded": True, "solutionPath": "sample.sln"}
+            ) as call,
         ):
             host.ensure_solution("sample.sln", None)
         call.assert_called_once()
+
+    def test_unconfirmed_solution_is_not_cached(self):
+        for reply in (
+            {"loaded": False, "solutionPath": "sample.sln"},
+            {"loaded": True, "solutionPath": "other.sln"},
+            {"loaded": True},
+            {"solutionPath": "sample.sln"},
+        ):
+            host = ShellHost(Path("unused.exe"))
+            with (
+                patch.object(host, "is_alive", return_value=True),
+                patch.object(host, "_call_raw_locked", return_value=reply),
+            ):
+                with self.assertRaises(HostError):
+                    host.ensure_solution("sample.sln", None)
+            self.assertIsNone(host._current_solution, reply)
+
+    def test_unconfirmed_solution_is_reported_as_not_dispatched(self):
+        host = ShellHost(Path("unused.exe"))
+        with (
+            patch.object(host, "is_alive", return_value=True),
+            patch.object(host, "_call_raw_locked", return_value={"loaded": False, "solutionPath": "s.sln"}) as call,
+            patch("twincat_mcp.dispatch.get_shell_host", return_value=host),
+        ):
+            result, _ = run_shell_step("activate", {}, solution_path="s.sln")
+        self.assertFalse(result["dispatched"])
+        self.assertNotIn("outcomeUnknown", result)
+        self.assertEqual(["ensure-solution"], [c.args[0] for c in call.call_args_list])
+
+    def test_lost_ensure_solution_is_not_dispatched(self):
+        host = ShellHost(Path("unused.exe"))
+        with (
+            patch.object(host, "is_alive", return_value=True),
+            patch.object(host, "_call_raw_locked", side_effect=HostError("timed out")) as call,
+            patch("twincat_mcp.dispatch.get_shell_host", return_value=host),
+        ):
+            result, _ = run_shell_step("activate", {}, solution_path="s.sln")
+            missing, _ = run_shell_step("activate", {})
+        self.assertFalse(result["dispatched"])
+        self.assertNotIn("outcomeUnknown", result)
+        self.assertFalse(missing["dispatched"])
+        self.assertEqual(["ensure-solution"], [c.args[0] for c in call.call_args_list])
+
+    def test_restart_waits_for_its_own_ready_line(self):
+        host = ShellHost(Path("unused.exe"))
+        host._ready_info = {"type": "ready"}  # left by a worker that died without cleanup
+        proc = Mock()
+        proc.poll.return_value = None
+        with (
+            patch("twincat_mcp.host.subprocess.Popen", return_value=proc),
+            patch("twincat_mcp.host.threading.Thread"),
+            patch.object(ShellHost, "READY_TIMEOUT_SEC", 0.2),
+        ):
+            with self.assertRaises(HostError):
+                host._start_locked()
+
+    def test_confirmed_solution_is_cached(self):
+        host = ShellHost(Path("unused.exe"))
+        reply = {"loaded": True, "solutionPath": os.path.abspath("sample.sln")}
+        with (
+            patch.object(host, "is_alive", return_value=True),
+            patch.object(host, "_call_raw_locked", return_value=reply) as call,
+        ):
+            host.ensure_solution("sample.sln", None)
+            cached = host.ensure_solution("sample.sln", None)
+        call.assert_called_once()
+        self.assertTrue(cached["cached"])
 
     def test_restarted_host_forgets_cached_solution(self):
         host = ShellHost(Path("unused.exe"))

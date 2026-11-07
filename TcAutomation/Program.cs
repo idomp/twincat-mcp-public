@@ -34,6 +34,8 @@ namespace TcAutomation
         [STAThread] // Required for COM STA thread
         static int Main(string[] args)
         {
+            ConsoleUtf8.Apply();
+
             // Package Manager installations keep the native ADS transport here.
             // Resolve it for this process even when the launching client has an
             // older PATH (for example, Codex was open during TwinCAT setup).
