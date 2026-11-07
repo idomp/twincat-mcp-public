@@ -163,5 +163,6 @@ static class Program
         ConsoleTests.Run();
         BuildOutputTests.Run();
         TypedValueTests.Run();
+        HmiTests.Run();
     }
 }

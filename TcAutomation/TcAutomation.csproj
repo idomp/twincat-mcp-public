@@ -123,6 +123,8 @@
     <Compile Include="Core\ActivationWait.cs" />
     <Compile Include="Core\TcUnitTasks.cs" />
     <Compile Include="Core\ConsoleUtf8.cs" />
+    <Compile Include="Commands\HmiCommand.cs" />
+    <Compile Include="Core\HmiPolicy.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />
     <Compile Include="Commands\CleanCommand.cs" />

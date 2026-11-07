@@ -150,6 +150,7 @@ class ShellHost:
         self._request_id = 0
         self._current_solution: str | None = None
         self._current_tc_version: str | None = None
+        self._current_hmi_only = False
         self._ready_info: dict | None = None
         self._last_error: str | None = None
 
@@ -169,6 +170,7 @@ class ShellHost:
         solution_path: str,
         tc_version: str | None,
         timeout: float = ENSURE_SOLUTION_TIMEOUT_SEC,
+        hmi_only: bool = False,
     ) -> dict:
         """
         Ensure the host has the given solution loaded. Lazily starts the
@@ -187,10 +189,12 @@ class ShellHost:
             # Cheap idempotency: if already pointing at the same solution
             # skip the round-trip. Comparison is normalized.
             if self._current_solution and _paths_equal(self._current_solution, solution_path):
-                if (tc_version or None) == (self._current_tc_version or None):
+                if (tc_version or None) == (
+                    self._current_tc_version or None
+                ) and hmi_only == self._current_hmi_only:
                     return {"loaded": True, "cached": True, "solutionPath": solution_path}
 
-            params = {"solutionPath": solution_path}
+            params = {"solutionPath": solution_path, "hmiOnly": hmi_only}
             if tc_version:
                 params["tcVersion"] = tc_version
             # Forget the cached pair first. A failed request can leave the host
@@ -199,6 +203,7 @@ class ShellHost:
             # old pair forever.
             self._current_solution = None
             self._current_tc_version = None
+            self._current_hmi_only = False
             res = self._call_raw_locked("ensure-solution", params, timeout=timeout)
             # Cache only a solution the worker reports loaded, under the requested path.
             reported = res.get("solutionPath") if isinstance(res, dict) else None
@@ -209,6 +214,7 @@ class ShellHost:
                 )
             self._current_solution = solution_path
             self._current_tc_version = tc_version
+            self._current_hmi_only = hmi_only
             return res
 
     def execute_step(
@@ -218,6 +224,7 @@ class ShellHost:
         solution_path: str | None,
         tc_version: str | None,
         timeout: float = 600.0,
+        hmi_only: bool = False,
     ) -> tuple[dict, list[str]]:
         """
         Run a single StepDispatcher command in the host's DTE.
@@ -243,6 +250,11 @@ class ShellHost:
 
             # Only shell commands need a loaded solution; ADS commands don't.
             shell_commands = {
+                "hmi-inspect",
+                "hmi-preflight",
+                "hmi-build",
+                "hmi-publish",
+                "hmi-status",
                 "build",
                 "build-symbols",
                 "info",
@@ -282,7 +294,9 @@ class ShellHost:
                 if not solution_path:
                     raise NotDispatched(f"{command} requires a solution path")
                 try:
-                    self.ensure_solution(solution_path, tc_version)
+                    self.ensure_solution(
+                        solution_path, tc_version, **({"hmi_only": True} if hmi_only else {})
+                    )
                 except NotDispatched:
                     raise
                 except HostError as exc:  # a lost or failed ensure-solution: no step was sent yet
@@ -355,6 +369,7 @@ class ShellHost:
         self._current_solution = None
         self._current_tc_version = None
         self._ready_info = None
+        self._current_hmi_only = False
 
         cmd = [str(self._exe_path), "host", "--mcp-pid", str(os.getpid())]
         try:
@@ -407,6 +422,7 @@ class ShellHost:
         self._ready_info = None
         self._current_solution = None
         self._current_tc_version = None
+        self._current_hmi_only = False
         while not self._responses.empty():
             try:
                 self._responses.get_nowait()

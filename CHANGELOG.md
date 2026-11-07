@@ -17,6 +17,47 @@
 - New limits: 4,096 columns, 256 per channel, 64 KiB per notification, 1 MiB of latest values and a 64 MiB row budget. For numeric requests the row limit stays the same as before.
 - `runtime.write_var` and `runtime.write_var_list` write enums by declared name or value, and TIME-family values as unsigned integers in their units. IEC literals such as `T#5S` are still rejected. Aliases of numeric types write as their base type. Subranges are refused for writes, because their bounds are not checked. Subranges are recorded as their base type, without a range check.
 
+## 3.1.0 — 2026-11-07
+
+### Added
+
+- HMI-only contexts bind an exact project and HTTPS server, independently of a
+  PLC. The existing owned XAE worker loads HMI-only solutions without requiring
+  a `.tsproj`, choosing a PLC target or activating TwinCAT.
+- `hmi.inspect`, `hmi.build`, `hmi.preflight`, `hmi.publish` and `hmi.status`
+  use TE2000's native automation API. Publication preserves server files and
+  extension data, requires an explicit context grant and matching preflight
+  fingerprint, submits once and reports completion without screen automation.
+- Source/configuration and publisher identity are checked before dispatch.
+  Wrong targets, destructive profiles and changed inputs are refused. Passwords
+  and raw vendor exception text are not exposed. Status remains readable after
+  an uncertain result while the same worker is alive; no mutation is replayed.
+- A repeatable stdio/native HMI qualification script and workflow guide.
+
+### Upgrade
+
+Update the repository, rebuild with `scripts/setup.ps1` and reconnect the MCP
+client to load application 3.1.0. The three public tools, MCP 2026-07-28 and SDK
+2.2.0 are unchanged; six catalog entries bring the total to 72 (68 discoverable).
+TE2000 HMI Engineering is optional and needed only for HMI operations. Keep its
+saved publishing credentials local. No additional PLC deployment license or
+PLC restart is introduced by the HMI publisher.
+
+### Validation and limits
+
+- 104 Python contract/lifecycle/grant tests and 231 native policy checks passed,
+  along with Ruff and dependency checks. They cover existing PLC behavior and
+  HMI isolation/refusal.
+- Real stdio/native qualification on TE2000 14.18.57.1: inspect, wrong-target
+  refusal, HMI build, changed-fingerprint refusal, publish, duplicate receipt
+  replay, status and closure. The local HIL PLC kept running at Max.
+- The first release requires HTTPS and non-destructive, abort-on-error profiles.
+  It refuses external/dynamic source inputs. Package cache contents are not
+  fingerprinted. The native publisher can save generated metadata; the result
+  reports changes observed during publication. It cannot roll back a blocking
+  vendor call. Other SDK result shapes remain unqualified and fail closed.
+
+
 ## 3.0.1 — 2026-11-05
 
 ### Fixes
