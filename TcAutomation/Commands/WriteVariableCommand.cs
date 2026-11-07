@@ -54,17 +54,31 @@ namespace TcAutomation.Commands
                     uint handle = adsClient.CreateVariableHandle(symbolName);
                     try
                     {
+                        var dataType = (symbolInfo as TwinCAT.TypeSystem.ISymbol)?.DataType;
+                        if (dataType != null && TcAutomation.Core.AdsTypedWrite.TryWrite(adsClient, handle, dataType, symbolInfo.Size, value, () => { },
+                                                                                            out var shownBefore, out var shownAfter))
+                        {
+                            result.PreviousValue = shownBefore;
+                            result.NewValue = shownAfter;
+                            result.Success = true;
+                        }
+                        else
+                        {
+                        // An alias or subrange of a numeric primitive writes as that primitive.
+                        string typeName = dataType != null ? TcAutomation.Core.AdsTypedWrite.NumericName(dataType, symbolInfo.TypeName) : symbolInfo.TypeName;
+
                         // Read current value before writing
-                        object previousValue = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
+                        object previousValue = ReadTypedValue(adsClient, handle, typeName, symbolInfo.Size);
                         result.PreviousValue = previousValue?.ToString() ?? "null";
 
                         // Convert the string value to the appropriate type and write
-                        WriteTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size, value);
-                        
+                        WriteTypedValue(adsClient, handle, typeName, symbolInfo.Size, value);
+
                         // Read back to confirm
-                        object newValue = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
+                        object newValue = ReadTypedValue(adsClient, handle, typeName, symbolInfo.Size);
                         result.NewValue = newValue?.ToString() ?? "null";
                         result.Success = true;
+                        }
                     }
                     finally
                     {

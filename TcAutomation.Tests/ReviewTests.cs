@@ -53,17 +53,7 @@ static class ReviewTests
             var write = new WriteVariableListResult { SymbolCount=1, ErrorCount=1 };
             write.Results["MAIN.Bad"] = new WriteVariableItemResult { Success=false };
             Check(!write.Success && !StepDispatcher.IsResultSuccessful(write), "Failed writes cannot advance workflows");
-            var samples = new RecordingSamples(500); var row = new double[500]; row[0]=42;
-            for(int i=0;i<samples.MaxRows;i++) if(!samples.Add(DateTimeOffset.UtcNow,row)) throw new Exception("early recording limit");
-            row[0]=99;
-            Check(!samples.Add(DateTimeOffset.UtcNow,row) && samples.LimitReached && samples.Rows.Count==2000, "Recording rows/cells are bounded under sustained input");
-            Check(samples.Rows.TryDequeue(out var first) && first.Values[0]==42, "Captured rows preserve their snapshot");
-            Check(RecordingSamples.CsvHeader("=SUM(A1)").StartsWith("\"'="), "CSV headers cannot introduce spreadsheet formulas");
-            var startup = new RecordingSamples(2);
-            startup.Update(0, 7, DateTimeOffset.UtcNow);
-            Check(startup.Rows.IsEmpty, "Incomplete initial notifications never fabricate zero values");
-            startup.Update(1, 8, DateTimeOffset.UtcNow); startup.Update(0, 9, DateTimeOffset.UtcNow);
-            Check(startup.Rows.TryDequeue(out var initialized) && initialized.Values.SequenceEqual(new double[]{9,8}), "Snapshots begin after every channel has a real value");
+            // Recording storage checks are in TypedValueTests (raw-byte rows).
             string csv=Path.Combine(directory,"trace.csv");File.WriteAllText(csv,"existing data");
             var record=AdsRecordCommand.Execute("1.2.3.4.1.1",851,new[]{"MAIN.X"},10,1,csv);
             Check(!record.Success && File.ReadAllText(csv)=="existing data", "Recording rejects overwrite before ADS access");

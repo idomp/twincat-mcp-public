@@ -64,17 +64,20 @@ namespace TcAutomation.Commands
                         return result;
                     }
 
-                    // Read symbol info for each variable
-                    var symbolInfos = new List<(string Name, int Size, string TypeName)>();
-                    foreach (var varName in variables)
+                    // Describe and compile every channel before any subscription: an unsupported member
+                    // anywhere rejects the whole request, and nothing is guessed from a name or a size.
+                    var plans = new List<ChannelPlan>();
+                    for (int i = 0; i < variables.Length; i++)
                     {
+                        var varName = variables[i];
                         try
                         {
                             var symbol = (IValueSymbol)client.ReadSymbol(varName);
-                            var typeName = symbol.DataType?.Name?.ToUpperInvariant() ?? "";
-                            var size = symbol.Size;
-                            if (AdsValues.NumericSize(typeName) != size) throw new ArgumentException("Recording requires a numeric scalar of its declared size.");
-                            symbolInfos.Add((varName, size, typeName));
+                            if (symbol.IsStatic || symbol.IsProperty || symbol.IsReference || symbol.IsPointer)
+                                throw new ArgumentException($"{varName}: static symbols, properties, references and pointers are not supported.");
+                            var type = AdsTypes.Describe(symbol.DataType, varName, (symbol as IAttributedInstance)?.ValueEncoding);
+                            if (type.Size != symbol.Size) throw new ArgumentException($"{varName}: symbol is {symbol.Size} bytes, its type {type.Size}.");
+                            plans.Add(TypedValues.Compile(varName, type, i));
                         }
                         catch (Exception ex)
                         {
@@ -83,6 +86,18 @@ namespace TcAutomation.Commands
                             return result;
                         }
                     }
+                    var columns = plans.SelectMany(pl => pl.Columns).ToList();
+                    var duplicate = columns.GroupBy(c => c.Name, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
+                    if (duplicate != null) throw new ArgumentException($"Two channels both produce the column {duplicate.Key}.");
+                    if (columns.Count > RecordingSamples.MaxColumns)
+                        throw new ArgumentException($"The request expands to {columns.Count} columns, above {RecordingSamples.MaxColumns}.");
+                    result.ColumnCount = columns.Count;
+                    result.Columns = columns.Select((c, i) => new RecordColumn
+                    {
+                        Index = i, Name = c.Name, Channel = c.Channel, DeclaredType = c.DeclaredType, Kind = c.Kind.ToString(),
+                        Unit = c.Unit.Length > 0 ? c.Unit : null, Offset = c.Offset, Size = c.Size,
+                        CodePage = c.Kind == LeafKind.Text ? c.CodePage : (int?)null,
+                    }).ToList();
 
                     // Parse triggers
                     TriggerCondition? parsedStartTrigger = null;
@@ -111,7 +126,8 @@ namespace TcAutomation.Commands
                     }
 
                     // Shared state for notification handling
-                    var samples = new RecordingSamples(variables.Length);
+                    var samples = new RecordingSamples(plans.Select(pl => pl.Size).ToArray(), columns.Count);
+                    result.MaxRows = samples.MaxRows;
                     var rows = samples.Rows;
                     var handles = new uint[variables.Length];
                     var handleToIndex = new ConcurrentDictionary<uint, int>();
@@ -120,6 +136,7 @@ namespace TcAutomation.Commands
                     var recording = parsedStartTrigger == null ? 1 : 0; // 1 = recording, 0 = waiting
                     var stopSignal = new ManualResetEventSlim(false);
                     string notificationError = null;
+                    int stoppedByLimitOrError = 0;  // a stop that is not a trigger
                     uint startTriggerHandle = 0;
                     uint stopTriggerHandle = 0;
 
@@ -135,7 +152,7 @@ namespace TcAutomation.Commands
                         if (parsedStartTrigger != null && e.Handle == parsedStartTrigger.Value.NotificationHandle)
                         {
                             var bytes = e.Data.ToArray();
-                            var val = ConvertToDouble(bytes, parsedStartTrigger.Value.TypeName);
+                            var val = ConvertToDouble(bytes, parsedStartTrigger.Value.TypeName, parsedStartTrigger.Value.Size);
                             if (EvaluateCondition(val, parsedStartTrigger.Value.Operator, parsedStartTrigger.Value.Threshold))
                             {
                                 Interlocked.CompareExchange(ref recording, 1, 0);
@@ -149,7 +166,7 @@ namespace TcAutomation.Commands
                             if (Volatile.Read(ref recording) == 1)
                             {
                                 var bytes = e.Data.ToArray();
-                                var val = ConvertToDouble(bytes, parsedStopTrigger.Value.TypeName);
+                                var val = ConvertToDouble(bytes, parsedStopTrigger.Value.TypeName, parsedStopTrigger.Value.Size);
                                 if (EvaluateCondition(val, parsedStopTrigger.Value.Operator, parsedStopTrigger.Value.Threshold))
                                 {
                                     stopSignal.Set();
@@ -163,14 +180,16 @@ namespace TcAutomation.Commands
                             return;
 
                         if (!handleToIndex.TryGetValue(e.Handle, out int idx)) return;
-                        if (!samples.Update(idx, ConvertToDouble(e.Data.ToArray(), symbolInfos[idx].TypeName), e.TimeStamp))
+                        if (!samples.Update(idx, e.Data.ToArray(), e.TimeStamp))
                         {
+                            Interlocked.Exchange(ref stoppedByLimitOrError, 1);
                             Interlocked.Exchange(ref recording, 0); stopSignal.Set();
                         }
                         }
                         catch (Exception ex)
                         {
                             Interlocked.CompareExchange(ref notificationError, ex.Message, null);
+                            Interlocked.Exchange(ref stoppedByLimitOrError, 1);
                             Interlocked.Exchange(ref recording, 0); stopSignal.Set();
                         }
                     };
@@ -203,7 +222,7 @@ namespace TcAutomation.Commands
                         {
                             var handle = client.AddDeviceNotification(
                                 variables[i],
-                                symbolInfos[i].Size,
+                                plans[i].Size,
                                 settings,
                                 null);
                             handles[i] = handle;
@@ -249,7 +268,7 @@ namespace TcAutomation.Commands
                                 catch (OperationCanceledException) { break; }
                             }
 
-                            if (stopSignal.IsSet)
+                            if (stopSignal.IsSet && Volatile.Read(ref stoppedByLimitOrError) == 0)
                             {
                                 result.StopTrigger = stopTrigger;
                                 result.TriggerStatus = result.TriggerStatus == "start_triggered"
@@ -302,7 +321,7 @@ namespace TcAutomation.Commands
                     using (var writer = new StreamWriter(stream, Encoding.UTF8))
                     {
                         // Header
-                        var header = "Timestamp," + string.Join(",", variables.Select(RecordingSamples.CsvHeader));
+                        var header = "Timestamp," + string.Join(",", columns.Select(c => RecordingSamples.CsvHeader(c.Name)));
                         writer.WriteLine(header);
 
                         // Data rows
@@ -311,10 +330,17 @@ namespace TcAutomation.Commands
                         {
                             var sb = new StringBuilder();
                             sb.Append(row.Timestamp.ToString("o"));
-                            for (int i = 0; i < row.Values.Length; i++)
+                            foreach (var c in columns)  // decoded from the retained raw payload
                             {
                                 sb.Append(',');
-                                sb.Append(row.Values[i].ToString("G", CultureInfo.InvariantCulture));
+                                sb.Append(TypedValues.Cell(c, row.Payload, samples.Starts[c.Channel], out var decodeError, out var unknownEnum));
+                                if (unknownEnum) result.UnknownEnumValueCount++;
+                                if (decodeError != null)
+                                {
+                                    result.DecodeErrorCount++;
+                                    if (result.DecodeErrors.Count < 100) result.DecodeErrors.Add($"row {sampleCount}, {c.Name}: {decodeError}");
+                                    else result.DecodeErrorsTruncated = true;
+                                }
                             }
                             writer.WriteLine(sb.ToString());
                             sampleCount++;
@@ -328,9 +354,10 @@ namespace TcAutomation.Commands
                     result.OutputPath = outputPath;
                     result.DurationSeconds = sw.Elapsed.TotalSeconds;
                     result.LimitReached = samples.LimitReached;
-                    result.Success = notificationError == null && !result.LimitReached;
+                    result.Success = notificationError == null && !result.LimitReached && result.DecodeErrorCount == 0;
                     if (result.LimitReached) result.ErrorMessage = "Recording stopped at the bounded row/cell limit; collected rows were retained.";
                     if (notificationError != null) result.ErrorMessage = "Invalid notification data: " + notificationError;
+                    else if (result.DecodeErrorCount > 0) result.ErrorMessage = $"{result.DecodeErrorCount} cells could not be decoded; see decodeErrors.";
                 }
             }
             catch (Exception ex)
@@ -386,15 +413,17 @@ namespace TcAutomation.Commands
             try
             {
                 var symbol = (IValueSymbol)client.ReadSymbol(varName);
-                var typeName = symbol.DataType?.Name?.ToUpperInvariant() ?? "";
-                if (AdsValues.NumericSize(typeName) != symbol.Size) throw new ArgumentException("Trigger must be a numeric scalar.");
+                // Aliases and subranges of a numeric primitive are numeric too; nothing else is.
+                var type = AdsTypes.Describe(symbol.DataType, varName);
+                if (type.Kind != TypeKind.Primitive || !TypedValues.IsNumeric(type.Primitive) || type.Size != symbol.Size)
+                    throw new ArgumentException("Trigger must be a numeric scalar.");
                 return new TriggerCondition
                 {
                     Variable = varName,
                     Operator = foundOp,
                     Threshold = threshold,
                     Size = symbol.Size,
-                    TypeName = typeName
+                    TypeName = type.Primitive
                 };
             }
             catch (Exception ex)
@@ -418,42 +447,10 @@ namespace TcAutomation.Commands
             }
         }
 
-        private static double ConvertToDouble(byte[] bytes, string typeName)
+        private static double ConvertToDouble(byte[] bytes, string typeName, int size)
         {
-            if (bytes.Length != AdsValues.NumericSize(typeName)) throw new ArgumentException("Notification size does not match its numeric type.");
-            switch (typeName)
-            {
-                case "LREAL":
-                    return BitConverter.ToDouble(bytes, 0);
-                case "REAL":
-                    return (double)BitConverter.ToSingle(bytes, 0);
-                case "LINT":
-                    return (double)BitConverter.ToInt64(bytes, 0);
-                case "DINT":
-                    return (double)BitConverter.ToInt32(bytes, 0);
-                case "INT":
-                    return (double)BitConverter.ToInt16(bytes, 0);
-                case "SINT":
-                    return (double)(sbyte)bytes[0];
-                case "ULINT":
-                    return (double)BitConverter.ToUInt64(bytes, 0);
-                case "UDINT":
-                    return (double)BitConverter.ToUInt32(bytes, 0);
-                case "UINT":
-                    return (double)BitConverter.ToUInt16(bytes, 0);
-                case "USINT":
-                case "BYTE":
-                    return (double)bytes[0];
-                case "BOOL":
-                    return bytes[0] != 0 ? 1.0 : 0.0;
-                case "WORD":
-                    return (double)BitConverter.ToUInt16(bytes, 0);
-                case "DWORD":
-                    return (double)BitConverter.ToUInt32(bytes, 0);
-                case "LWORD":
-                    return (double)BitConverter.ToUInt64(bytes, 0);
-                default: throw new ArgumentException("Unsupported recording type.");
-            }
+            if (bytes.Length != size) throw new ArgumentException("Notification size does not match its numeric type.");
+            return TypedValues.NumericValue(typeName, bytes, 0);
         }
     }
 }

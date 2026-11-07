@@ -54,5 +54,28 @@ namespace TcAutomation.Models
         public string? StartTrigger { get; set; }
         public string? StopTrigger { get; set; }
         public string? TriggerStatus { get; set; }
+        public string FormatVersion { get; set; } = "typed-csv-v1";
+        public string RowEmission { get; set; } = "channel0";
+        public int ColumnCount { get; set; }
+        public List<RecordColumn> Columns { get; set; } = new List<RecordColumn>();
+        public int MaxRows { get; set; }
+        public int DecodeErrorCount { get; set; }
+        public List<string> DecodeErrors { get; set; } = new List<string>();
+        public bool DecodeErrorsTruncated { get; set; }
+        public int UnknownEnumValueCount { get; set; }
+    }
+
+    /// <summary>One CSV data column, in CSV order.</summary>
+    public class RecordColumn
+    {
+        public int Index { get; set; }
+        public string Name { get; set; } = "";
+        public int Channel { get; set; }
+        public string DeclaredType { get; set; } = "";
+        public string Kind { get; set; } = "";
+        public string? Unit { get; set; }
+        public int Offset { get; set; }
+        public int Size { get; set; }
+        public int? CodePage { get; set; }
     }
 }

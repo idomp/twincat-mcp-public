@@ -115,6 +115,9 @@
     <Compile Include="Core\ArtifactFiles.cs" />
     <Compile Include="Core\AdsValues.cs" />
     <Compile Include="Core\RecordingSamples.cs" />
+    <Compile Include="Core\TypedValues.cs" />
+    <Compile Include="Core\AdsTypes.cs" />
+    <Compile Include="Core\AdsTypedWrite.cs" />
     <Compile Include="Core\SessionFile.cs" />
     <Compile Include="Core\ActivationWait.cs" />
     <Compile Include="Core\TcUnitTasks.cs" />

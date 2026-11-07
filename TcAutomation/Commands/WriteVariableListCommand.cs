@@ -87,16 +87,28 @@ namespace TcAutomation.Commands
                             handle = adsClient.CreateVariableHandle(symbolName);
                             handleCreated = true;
 
-                            object previousValue = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
-                            itemResult.PreviousValue = previousValue?.ToString() ?? "null";
+                            var dataType = (symbolInfo as TwinCAT.TypeSystem.ISymbol)?.DataType;
+                            if (dataType != null && AdsTypedWrite.TryWrite(adsClient, handle, dataType, symbolInfo.Size, value,
+                                                                           () => itemResult.WriteDispatched = true, out var shownBefore, out var shownAfter))
+                            {
+                                itemResult.PreviousValue = shownBefore;
+                                itemResult.NewValue = shownAfter;
+                            }
+                            else
+                            {
+                                // An alias or subrange of a numeric primitive writes as that primitive.
+                                string typeName = dataType != null ? AdsTypedWrite.NumericName(dataType, symbolInfo.TypeName) : symbolInfo.TypeName;
+                                object previousValue = ReadTypedValue(adsClient, handle, typeName, symbolInfo.Size);
+                                itemResult.PreviousValue = previousValue?.ToString() ?? "null";
 
-                            object parsed = AdsValues.Parse(symbolInfo.TypeName, symbolInfo.Size, value);
-                            itemResult.WriteDispatched = true;
-                            if (parsed is string) adsClient.WriteAny(handle, parsed, new int[] { symbolInfo.Size });
-                            else adsClient.WriteAny(handle, parsed);
+                                object parsed = AdsValues.Parse(typeName, symbolInfo.Size, value);
+                                itemResult.WriteDispatched = true;
+                                if (parsed is string) adsClient.WriteAny(handle, parsed, new int[] { symbolInfo.Size });
+                                else adsClient.WriteAny(handle, parsed);
 
-                            object newValue = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
-                            itemResult.NewValue = newValue?.ToString() ?? "null";
+                                object newValue = ReadTypedValue(adsClient, handle, typeName, symbolInfo.Size);
+                                itemResult.NewValue = newValue?.ToString() ?? "null";
+                            }
 
                             itemResult.Success = true;
                             result.SuccessCount++;

@@ -159,5 +159,6 @@ static class Program
         WatchdogTests.Run();
         ConsoleTests.Run();
         BuildOutputTests.Run();
+        TypedValueTests.Run();
     }
 }

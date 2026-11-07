@@ -36,6 +36,7 @@
     <Compile Include="WatchdogTests.cs" />
     <Compile Include="ConsoleTests.cs" />
     <Compile Include="BuildOutputTests.cs" />
+    <Compile Include="TypedValueTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

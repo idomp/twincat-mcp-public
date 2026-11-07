@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Typed ADS values
+
+- `runtime.record` records aliases, subranges, enums, TIME, TOD, DATE, DT, LTIME, fixed strings, structs and rectangular arrays. A struct or array expands into one column per member or element, with real indices such as `values[1]` and `grid[1,-2]`. An enum gives `.value` and `.name` columns. Temporal columns hold exact integers in their units, and the result lists every column with its unit.
+- The recorder reads ADS metadata once before it subscribes. It dispatches on the ADS category, identifies a primitive by its exact IEC name and size, and never infers a type from a size alone or a name prefix. A pointer, reference, interface, union or BIT member anywhere in a request rejects the request before any subscription. `LDATE`, `LDT` and `LTOD` stay rejected until they are qualified on TwinCAT 3.1.4026.
+- Function block instances arrive as structs in ADS 7.0.317 (measured), so they record their members. Their references and pointers are still rejected.
+- Rows keep the raw notification bytes and are decoded at export. A cell that cannot be decoded is written as `#DECODE_ERROR:<code>`, and the result fails with bounded `decodeErrors`. Numeric output stays byte-identical to 3.0, including the rounding of 64-bit integers above 2^53.
+- New limits: 4,096 columns, 256 per channel, 64 KiB per notification, 1 MiB of latest values and a 64 MiB row budget. For numeric requests the row limit stays the same as before.
+- `runtime.write_var` and `runtime.write_var_list` write enums by declared name or value, and TIME-family values as unsigned integers in their units. IEC literals such as `T#5S` are still rejected. Aliases of numeric types write as their base type. Subranges are refused for writes, because their bounds are not checked. Subranges are recorded as their base type, without a range check.
+
 ## 3.0.1 — 2026-11-05
 
 ### Fixes
