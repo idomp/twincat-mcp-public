@@ -6,6 +6,7 @@ small, and reports a state change as an observation rather than a failure.
 No write, state change, activation, route change or login happens here.
 """
 import csv
+import re
 import subprocess
 import uuid
 
@@ -123,7 +124,7 @@ async def main(run):
                 if t in NUMERIC and t not in seen and "[" not in s["name"]:
                     chosen.append(s); seen.add(t)
             st["numeric"] = chosen[:6]
-            st["string"] = next((s for s in st.get("symbols", []) if (s.get("typeName") or "").upper().startswith("STRING")), None)
+            st["strings"] = [s for s in st.get("symbols", []) if re.fullmatch(r"STRING\(\d+\)", s.get("typeName") or "")][:3]
 
         pick()
 
@@ -188,11 +189,23 @@ async def main(run):
                                                        "durationSec": 1, "maxTimeSec": 5, "outputPath": str(out), "grantHandle": g})
             check(again.get("state") == "failed" and sha256(out) == before, "existing CSV overwritten or accepted")
             extra = ""
-            if st.get("string"):
-                bad = await c.run_op("runtime.record", {"amsNetId": TARGET, "port": PORT, "variables": [st["string"]["name"]], "sampleTimeMs": 10,
-                                                         "durationSec": 1, "maxTimeSec": 5, "outputPath": str(run.dir / "artifacts" / "str.csv"), "grantHandle": g})
-                check(bad.get("state") == "failed", "STRING channel accepted")
-                extra = "; STRING channel refused"
+            # Typed recording: a fixed STRING records as quoted, decoded text. A static, property or
+            # reference STRING is refused by design, so up to three candidates are tried.
+            extra, tried = "; no STRING(n) symbol to record", []
+            for i, s in enumerate(st.get("strings", [])):
+                path = run.dir / "artifacts" / f"str{i}.csv"
+                text = await c.run_op("runtime.record", {"amsNetId": TARGET, "port": PORT, "variables": [s["name"]], "sampleTimeMs": 10,
+                                                          "durationSec": 1, "maxTimeSec": 5, "outputPath": str(path), "grantHandle": g})
+                rows = path.read_text(encoding="utf-8-sig").splitlines()[1:] if path.exists() else []
+                cells = [r.split(",", 1)[1] for r in rows if "," in r]
+                quoted = (text.get("state") == "succeeded" and cells
+                      and all(len(x) >= 2 and x[0] == '"' and x[-1] == '"' and "#DECODE_ERROR" not in x for x in cells))
+                tried.append(f"{text.get('state')}: {str(res(text).get('errorMessage'))[:80]}")
+                if quoted:
+                    extra = f"; STRING channel recorded as quoted text in {len(cells)} rows"
+                    break
+            else:
+                check(not st.get("strings"), f"no STRING channel recorded as quoted text: {tried}")
             many, _ = await c.submit("runtime.record", {"amsNetId": TARGET, "variables": [f"X.v{i}" for i in range(501)], "grantHandle": g})
             check(many.get("code") == "invalid_arguments", f"501 channels: {many}")
             return (f"{x.get('samplesCollected')} rows x {len(names)} channels in {round(x.get('durationSeconds') or 0, 1)} s; "
