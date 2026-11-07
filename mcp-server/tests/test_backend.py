@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from twincat_mcp.backend import Backend
+from twincat_mcp.backend import Backend, normalize
 from twincat_mcp.catalog import Catalog
 from twincat_mcp.cli import find_tc_automation_exe
 from twincat_mcp.dispatch import run_shell_step
@@ -369,3 +369,33 @@ class CatalogTests(unittest.TestCase):
                     "grantHandle": "grant",
                 },
             )
+
+
+class ListResultNormalizeTests(unittest.TestCase):
+    def test_ordered_items_keep_order_duplicates_and_symbols(self):
+        raw = {
+            "Items": [
+                {"Index": 0, "Symbol": "GVL.A", "Result": {"Success": True, "Value": "1"}},
+                {"Index": 1, "Symbol": "MAIN.Cnt", "Result": {"Success": True, "Value": "2"}},
+                {"Index": 2, "Symbol": "GVL.A", "Result": {"Success": False, "ErrorMessage": "x"}},
+            ],
+            "Results": {"GVL.A": {"Success": False}, "MAIN.Cnt": {"Success": True}},
+            "SymbolCount": 3,
+        }
+        out = normalize(raw)
+        self.assertEqual([i["symbol"] for i in out["items"]], ["GVL.A", "MAIN.Cnt", "GVL.A"])
+        self.assertEqual([i["index"] for i in out["items"]], [0, 1, 2])
+        self.assertEqual(out["items"][2]["result"], {"success": False, "errorMessage": "x"})
+        self.assertEqual(set(out["results"]), {"GVL.A", "MAIN.Cnt"})
+        self.assertEqual(out["symbolCount"], 3)
+
+
+class ListWriteValueTests(unittest.TestCase):
+    def test_backend_sends_json_numbers_and_booleans_to_the_worker(self):
+        entry = Catalog().get("runtime.write_var_list")
+        args = {"amsNetId": "192.0.2.1.1.1", "port": 851, "grantHandle": "g",
+                "variables": {"GVL.n": 18446744073709551615, "GVL.r": 42.0, "GVL.b": True, "GVL.s": "3.14", "GVL.z": -0.0}}
+        with patch("twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])) as step:
+            Backend().run(entry, dict(args), None)
+        sent = step.call_args.args[1]["variables"]
+        self.assertEqual(sent, '{"GVL.n": 18446744073709551615, "GVL.r": 42.0, "GVL.b": true, "GVL.s": "3.14", "GVL.z": -0.0}')

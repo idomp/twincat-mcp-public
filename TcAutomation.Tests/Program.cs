@@ -158,6 +158,7 @@ static class Program
         CodeStateTests.Run();
         LibraryInfoTests.Run();
         TypedReadTests.Run();
+        ListOpsTests.Run();
         TcUnitTaskTests.Run();
         WatchdogTests.Run();
         ConsoleTests.Run();

@@ -789,7 +789,7 @@
   },
   {
     "id": "runtime.read_var",
-    "description": "Read one PLC symbol over ADS, returning value, data type and byte size. An enum or TIME-family value also returns typedValue (\"0 (OFF)\", or the integer in its unit) and typedUnit (null for an enum); both are null for other types, and value keeps the raw form.",
+    "description": "Read one PLC symbol over ADS, in Run or Stop, returning value, data type and byte size. An enum or TIME-family value also returns typedValue (\"0 (OFF)\", or the integer in its unit) and typedUnit (null for an enum); both are null for other types, and value keeps the raw form.",
     "kind": "operation",
     "command": "read-var",
     "engineering": false,
@@ -1312,7 +1312,7 @@
   },
   {
     "id": "runtime.read_var_list",
-    "description": "Read up to 500 PLC symbols in one operation. Per-item errors fail the overall receipt; this is not an atomic ADS sum read. Enum and TIME-family items also return typedValue and typedUnit; both are null for other types.",
+    "description": "Read up to 500 PLC symbols in one operation. Per-item errors fail the overall receipt; this is not an atomic ADS sum read. Enum and TIME-family items also return typedValue and typedUnit; both are null for other types. The items array holds every result in request order (index, symbol, result); results keeps the map keyed by symbol. A PLC in Stop can be read.",
     "kind": "operation",
     "command": "read-var-list",
     "engineering": false,
@@ -1356,7 +1356,7 @@
   },
   {
     "id": "runtime.write_var_list",
-    "description": "Write up to 500 PLC symbols with a target grant. Per-item errors fail the receipt and retain partial results; writes are not atomic or rolled back.",
+    "description": "Write up to 500 PLC symbols with a target grant. Per-item errors fail the receipt and retain partial results; writes are not atomic or rolled back. Values may be strings, numbers or Booleans.",
     "kind": "operation",
     "command": "write-var-list",
     "engineering": false,
@@ -1373,9 +1373,13 @@
         },
         "variables": {
           "type": "object",
-          "description": "Dictionary of symbol paths to values (e.g., {'GVL.x': '42', 'GVL.y': '3.14'}). Max 500 entries.",
+          "description": "Dictionary of symbol paths to values: strings, numbers or Booleans (e.g., {'GVL.x': 42, 'GVL.y': '3.14', 'GVL.b': true}). An integer keeps its exact value. A decimal number travels as a double, so send a string for exact decimal text. Max 500 entries.",
           "additionalProperties": {
-            "type": "string"
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
           },
           "minProperties": 1,
           "maxProperties": 500

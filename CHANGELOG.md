@@ -4,6 +4,10 @@
 
 ### Fixes
 
+- `runtime.read_var` and `runtime.read_var_list` read a PLC in Stop as well as in Run. Every other state still refuses the read.
+- `runtime.write_var_list` takes JSON numbers and Booleans as well as strings. An integer keeps its exact value, so a 64-bit integer is never rounded through a double. A decimal number travels as a double. A REAL or LREAL written as the string `"-0"` or the number `-0.0` keeps its sign. A bare `-0` arrives as integer zero. `runtime.write_var` keeps the sign the same way. The read-back text of a negative zero is `0`. Null, objects and arrays refuse the request before any write.
+- List read and write results use an invariant decimal point, whatever the culture of the PC.
+- `runtime.read_var_list` adds `items`, every result in request order with its index and symbol. `results` keeps the map keyed by symbol.
 - `engineering.generate_library` refuses a PLC project without Company, Title or Version before any build or export, `dryRun` included, and names each missing field. XAE refused such a project inside `SaveAsLibrary` ("not a managed library", measured for each field), after the export had started, so the result was an unknown outcome and the context expired.
 - `runtime.read_var` and `runtime.read_var_list` add `typedValue` and `typedUnit` for enums and TIME-family values, decoded from the bytes already read. An enum reads as `"0 (OFF)"`, a TIME as `"300000"` with unit `ms` (measured). `value` keeps the raw form, and both fields are null for other types.
 - `engineering.matching_login` waits up to 10 s for the PLC `CodeState` to be set before it decides. XAE leaves the value empty for a moment after the project loads: measured empty on the first read and set 1.1 s later, on TwinCAT 3.1.4024. The command refused a valid baseline with "CodeState: " before. A set value, right or wrong, is decided at once, so the wait cannot pass a mismatch. A value still empty after 10 s refuses with "CodeState: (empty after 10 s)".

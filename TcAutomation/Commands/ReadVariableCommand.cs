@@ -37,9 +37,9 @@ namespace TcAutomation.Commands
 
                     // Check state - must be running to read symbols
                     var stateInfo = adsClient.ReadState();
-                    if (stateInfo.AdsState != AdsState.Run)
+                    if (!TcAutomation.Core.AdsValues.Readable(stateInfo.AdsState))
                     {
-                        result.ErrorMessage = $"PLC is not running (state: {stateInfo.AdsState}). Cannot read variables.";
+                        result.ErrorMessage = $"PLC is not in Run or Stop (state: {stateInfo.AdsState}). Cannot read variables.";
                         Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
                         return 1;
                     }
@@ -57,7 +57,7 @@ namespace TcAutomation.Commands
                         // Read based on the type
                         object value = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size, out var bytes);
                         
-                        result.Value = value?.ToString() ?? "null";
+                        result.Value = TcAutomation.Core.AdsValues.Text(value);
                         result.RawValue = value;
                         if (bytes != null)
                         {

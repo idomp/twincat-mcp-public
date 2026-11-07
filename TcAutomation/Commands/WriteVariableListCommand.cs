@@ -21,7 +21,10 @@ namespace TcAutomation.Commands
             Dictionary<string, string> variables;
             try
             {
-                variables = JsonSerializer.Deserialize<Dictionary<string, string>>(variablesJson);
+                // Numbers keep their exact JSON text; null, objects and arrays fail before any write.
+                var raw = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(variablesJson);
+                variables = raw == null ? null : new Dictionary<string, string>();
+                if (raw != null) foreach (var pair in raw) variables[pair.Key] = AdsValues.ScalarText(pair.Value);
             }
             catch (Exception ex)
             {
@@ -99,7 +102,7 @@ namespace TcAutomation.Commands
                                 // An alias or subrange of a numeric primitive writes as that primitive.
                                 string typeName = dataType != null ? AdsTypedWrite.NumericName(dataType, symbolInfo.TypeName) : symbolInfo.TypeName;
                                 object previousValue = ReadTypedValue(adsClient, handle, typeName, symbolInfo.Size);
-                                itemResult.PreviousValue = previousValue?.ToString() ?? "null";
+                                itemResult.PreviousValue = AdsValues.Text(previousValue);
 
                                 object parsed = AdsValues.Parse(typeName, symbolInfo.Size, value);
                                 itemResult.WriteDispatched = true;
@@ -107,7 +110,7 @@ namespace TcAutomation.Commands
                                 else adsClient.WriteAny(handle, parsed);
 
                                 object newValue = ReadTypedValue(adsClient, handle, typeName, symbolInfo.Size);
-                                itemResult.NewValue = newValue?.ToString() ?? "null";
+                                itemResult.NewValue = AdsValues.Text(newValue);
                             }
 
                             itemResult.Success = true;

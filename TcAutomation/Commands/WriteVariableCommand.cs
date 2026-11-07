@@ -182,11 +182,11 @@ namespace TcAutomation.Commands
             }
             else if (upperType == "REAL")
             {
-                client.WriteAny(handle, float.Parse(value, CultureInfo.InvariantCulture));
+                client.WriteAny(handle, TcAutomation.Core.AdsValues.Real(value));
             }
             else if (upperType == "LREAL")
             {
-                client.WriteAny(handle, double.Parse(value, CultureInfo.InvariantCulture));
+                client.WriteAny(handle, TcAutomation.Core.AdsValues.LReal(value));
             }
             else if (upperType.StartsWith("STRING"))
             {

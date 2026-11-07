@@ -47,9 +47,9 @@ namespace TcAutomation.Commands
 
                     int remainingBytes = 8 * 1024 * 1024;
                     var stateInfo = adsClient.ReadState();
-                    if (stateInfo.AdsState != AdsState.Run)
+                    if (!AdsValues.Readable(stateInfo.AdsState))
                     {
-                        result.ErrorMessage = $"PLC is not running (state: {stateInfo.AdsState}). Cannot read variables.";
+                        result.ErrorMessage = $"PLC is not in Run or Stop (state: {stateInfo.AdsState}). Cannot read variables.";
                         Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                         return 1;
                     }
@@ -73,7 +73,7 @@ namespace TcAutomation.Commands
                             handleCreated = true;
 
                             object value = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size, out var bytes);
-                            itemResult.Value = value?.ToString() ?? "null";
+                            itemResult.Value = AdsValues.Text(value);
                             itemResult.RawValue = value;
                             if (bytes != null)
                             {
@@ -100,11 +100,11 @@ namespace TcAutomation.Commands
                                 catch (Exception cleanup) { itemResult.CleanupError = cleanup.Message; }
                         }
 
-                        result.Results[symbolName] = itemResult;
+                        result.Add(symbolName, itemResult);
                     }
                 }
 
-                foreach (var item in result.Results.Values)
+                foreach (var item in System.Linq.Enumerable.Select(result.Items, i => i.Result))
                 {
                     if (item.Success) result.SuccessCount++;
                     else result.ErrorCount++;
@@ -166,7 +166,14 @@ namespace TcAutomation.Commands
 
     public class ReadVariableListResult
     {
-        public bool Success => ErrorMessage == null && SymbolCount > 0 && Results.Count == SymbolCount && ErrorCount == 0;
+        // Items keeps every requested read in order, duplicates included. Results keeps the last read of each symbol.
+        public bool Success => ErrorMessage == null && SymbolCount > 0 && Items.Count == SymbolCount && ErrorCount == 0;
+        public List<ReadVariableListItem> Items { get; set; } = new List<ReadVariableListItem>();
+        public void Add(string symbol, ReadVariableItemResult item)
+        {
+            Items.Add(new ReadVariableListItem { Index = Items.Count, Symbol = symbol, Result = item });
+            Results[symbol] = item;
+        }
         public string AmsNetId { get; set; } = "";
         public int Port { get; set; }
         public int SymbolCount { get; set; }
@@ -174,6 +181,13 @@ namespace TcAutomation.Commands
         public int ErrorCount { get; set; }
         public Dictionary<string, ReadVariableItemResult> Results { get; set; } = new Dictionary<string, ReadVariableItemResult>();
         public string? ErrorMessage { get; set; }
+    }
+
+    public class ReadVariableListItem
+    {
+        public int Index { get; set; }
+        public string Symbol { get; set; } = "";
+        public ReadVariableItemResult Result { get; set; }
     }
 
     public class ReadVariableItemResult
