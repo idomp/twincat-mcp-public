@@ -155,6 +155,7 @@ static class Program
         ActivationWaitTests.Run();
         LayoutTests.Run();
         PortTests.Run();
+        CodeStateTests.Run();
         TcUnitTaskTests.Run();
         WatchdogTests.Run();
         ConsoleTests.Run();

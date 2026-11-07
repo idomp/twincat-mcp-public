@@ -107,15 +107,34 @@ namespace TcAutomation.Commands
         }
         internal static bool IsLoggedIn(ITcSmTreeItem plc) =>
             XDocument.Parse(plc.ProduceXml(false)).Root?.Element("IECProjectDef")?.Element("OnlineSettings")?.Element("LoggedIn")?.Value == "true";
+        static string ReadCodeState(ITcSmTreeItem plc) =>
+            XDocument.Parse(plc.ProduceXml(false)).Descendants("VSProperty")
+                .FirstOrDefault(p => p.Element("Name")?.Value == "CodeState")?.Element("Value")?.Value;
+        // XAE fills CodeState a moment after the project loads: measured empty
+        // on the first read, set 1.1 s later. Wait only while it is empty.
+        public const int CodeStateSettleMs = 10000, CodeStatePollMs = 250;
+        public static string SettledCodeState(Func<string> read, Func<long> elapsedMs, Action pause, long settleMs = CodeStateSettleMs)
+        {
+            var state = read();
+            while (string.IsNullOrEmpty(state) && elapsedMs() < settleMs) { pause(); state = read(); }
+            return state;
+        }
+        // A newly opened offline XAE session has no online reference yet.
+        // The non-silent login compares it with the runtime; mismatch dialogs
+        // are cancelled. Only the post-login "Code unchanged" state passes.
+        // Returns null when the state is accepted.
+        public static string CodeStateRefusal(string state, bool beforeLogin)
+        {
+            if (state == "Code unchanged" || (beforeLogin && state == "No reference code generated")) return null;
+            return "Prepare login from unchanged baseline source and retained compile information, before editing. CodeState: " +
+                (string.IsNullOrEmpty(state) ? $"(empty after {CodeStateSettleMs / 1000} s)" : state);
+        }
         static void RequireUnchanged(ITcSmTreeItem plc, bool beforeLogin = false)
         {
-            var state = XDocument.Parse(plc.ProduceXml(false)).Descendants("VSProperty")
-                .FirstOrDefault(p => p.Element("Name")?.Value == "CodeState")?.Element("Value")?.Value;
-            // A newly opened offline XAE session has no online reference yet.
-            // The non-silent login compares it with the runtime; mismatch dialogs
-            // are cancelled. Only the post-login "Code unchanged" state passes.
-            if (state != "Code unchanged" && !(beforeLogin && state == "No reference code generated"))
-                throw new InvalidOperationException("Prepare login from unchanged baseline source and retained compile information, before editing. CodeState: " + state);
+            var timer = Stopwatch.StartNew();
+            var state = SettledCodeState(() => ReadCodeState(plc), () => timer.ElapsedMilliseconds, () => Thread.Sleep(CodeStatePollMs));
+            var refusal = CodeStateRefusal(state, beforeLogin);
+            if (refusal != null) throw new InvalidOperationException(refusal);
         }
     }
     public class MatchingLoginResult

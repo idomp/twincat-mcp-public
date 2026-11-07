@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- `engineering.matching_login` waits up to 10 s for the PLC `CodeState` to be set before it decides. XAE leaves the value empty for a moment after the project loads: measured empty on the first read and set 1.1 s later, on TwinCAT 3.1.4024. The command refused a valid baseline with "CodeState: " before. A set value, right or wrong, is decided at once, so the wait cannot pass a mismatch. A value still empty after 10 s refuses with "CodeState: (empty after 10 s)".
+
 ### Typed ADS values
 
 - `runtime.record` records aliases, subranges, enums, TIME, TOD, DATE, DT, LTIME, fixed strings, structs and rectangular arrays. A struct or array expands into one column per member or element, with real indices such as `values[1]` and `grid[1,-2]`. An enum gives `.value` and `.name` columns. Temporal columns hold exact integers in their units, and the result lists every column with its unit.
